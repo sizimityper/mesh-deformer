@@ -1,0 +1,14 @@
+{
+  "name": "com.sizimityper.mesh-deformer",
+  "displayName": "sizimityper's mesh deformer",
+  "version": "1.0.0",
+  "unity": "2019.4",
+  "description": "Mesh deformer editor extension by sizimityper",
+  "author": {
+    "name": "sizimityper",
+    "email": "sizimityper@gmail.com",
+    "url": "https://github.com/sizimityper"
+  },
+  "license": "MIT",
+  "vpmDependencies": {}
+}
