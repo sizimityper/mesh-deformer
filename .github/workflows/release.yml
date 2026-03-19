@@ -22,8 +22,8 @@ jobs:
 
       - name: Create zip
         run: |
-          cd Packages
-          zip -r ../com.sizimityper.mesh-deformer-${{ steps.version.outputs.version }}.zip com.sizimityper.mesh-deformer/
+          cd Packages/com.sizimityper.mesh-deformer
+          zip -r ../../com.sizimityper.mesh-deformer-${{ steps.version.outputs.version }}.zip .
 
       - name: Upload zip to release
         uses: softprops/action-gh-release@v2
