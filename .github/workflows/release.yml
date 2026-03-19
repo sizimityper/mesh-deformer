@@ -16,7 +16,9 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "version=$(cat Packages/com.sizimityper.mesh-deformer/package.json | python3 -c \"import sys,json; print(json.load(sys.stdin)['version'])\")" >> $GITHUB_OUTPUT
+        run: |
+          VERSION=$(jq -r .version Packages/com.sizimityper.mesh-deformer/package.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create zip
         run: |
