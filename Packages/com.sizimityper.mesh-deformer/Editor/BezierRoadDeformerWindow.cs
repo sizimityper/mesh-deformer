@@ -59,8 +59,11 @@ public class BezierRoadDeformerWindow : EditorWindow
         if (Selection.activeGameObject != null)
         {
             var d = Selection.activeGameObject.GetComponent<BezierRoadDeformer>();
-            if (d != null) { _target = d; CacheAll(); }
+            if (d != null) { _target = d; CacheAll(); return; }
         }
+        // シーンに1つだけなら自動選択
+        var all = Object.FindObjectsByType<BezierRoadDeformer>(FindObjectsSortMode.None);
+        if (all.Length == 1) { _target = all[0]; CacheAll(); }
     }
 
     // ============================================================
@@ -194,7 +197,7 @@ public class BezierRoadDeformerWindow : EditorWindow
 
         if (_target == null)
         {
-            EditorGUILayout.HelpBox("BezierRoadDeformer が選択されていません。\nHierarchy でオブジェクトを選択してください。", MessageType.Info);
+            DrawNoTargetUI();
             return;
         }
 
@@ -213,6 +216,42 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUILayout.Space(8);
         DrawBakeButton();
         EditorGUILayout.EndScrollView();
+    }
+
+    // ---- No Target UI ---------------------------------------
+
+    private void DrawNoTargetUI()
+    {
+        var existing = Object.FindObjectsByType<BezierRoadDeformer>(FindObjectsSortMode.None);
+
+        if (existing.Length == 0)
+        {
+            EditorGUILayout.HelpBox("シーンに BezierRoadDeformer がありません。", MessageType.Info);
+            EditorGUILayout.Space(4);
+            if (GUILayout.Button("新規オブジェクトを作成", GUILayout.Height(32)))
+            {
+                var go = new GameObject("BezierRoad");
+                Undo.RegisterCreatedObjectUndo(go, "Create BezierRoad");
+                _target = Undo.AddComponent<BezierRoadDeformer>(go);
+                Selection.activeGameObject = go;
+                CacheAll();
+                Repaint();
+            }
+        }
+        else
+        {
+            EditorGUILayout.LabelField("対象を選択：", EditorStyles.boldLabel);
+            foreach (var d in existing)
+            {
+                if (GUILayout.Button(d.gameObject.name))
+                {
+                    _target = d;
+                    Selection.activeGameObject = d.gameObject;
+                    CacheAll();
+                    Repaint();
+                }
+            }
+        }
     }
 
     // ---- Header ---------------------------------------------
