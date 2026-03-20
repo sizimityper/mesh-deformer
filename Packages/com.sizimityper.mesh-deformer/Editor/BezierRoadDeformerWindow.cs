@@ -5,155 +5,182 @@ using SizimityperMeshDeformer;
 
 public class BezierRoadDeformerWindow : EditorWindow
 {
-    // ============================================================
-    // Open / Init
-    // ============================================================
-
     [MenuItem("Tools/sizimityper/mesh_deformer")]
-    public static void Open()
-    {
-        var win = GetWindow<BezierRoadDeformerWindow>();
-        win.titleContent = new GUIContent("Bezier Road Deformer");
-        win.minSize = new Vector2(300, 400);
-        win.Show();
-    }
-
-    // ============================================================
-    // State
-    // ============================================================
+    public static void Open() => GetWindow<BezierRoadDeformerWindow>("Mesh Deformer");
 
     private BezierRoadDeformer _target;
     private Vector2 _scroll;
-    private bool _previewEnabled = false;
 
-    // Change detection cache
-    private readonly List<Vector3>    _prevPositions = new List<Vector3>();
-    private readonly List<Quaternion> _prevRotations = new List<Quaternion>();
-    private int   _prevPivotCount   = -1;
-    private float _prevHandleLength = -1f;
+    // ---- Change Detection Cache ----
+    private CurveMode  _prevCurveMode;
+    private DeformMode _prevDeformMode;
+    private float      _prevTileAxisPadding;
+
     private float _prevParamR, _prevParamAngle, _prevParamCant, _prevParamGrade, _prevParamEaseLen;
-    private bool  _prevParamEase;
-    private bool  _prevParamTurnRight;
+    private bool  _prevTurnRight, _prevUseEasement, _prevGradeVerticalCurve;
+    private float _prevDesignSpeed, _prevFrictionCoeff;
+    private bool  _prevAutoDesignSpeed, _prevAutoFriction, _prevAutoApplyCant, _prevAutoEasement;
 
-    // Deform mode cache
-    private DeformMode _prevDeformMode      = (DeformMode)(-1);
-    private int        _prevSubdivisions    = -1;
-    private float      _prevTileAxisPadding = -1f;
+    private Transform _prevInterpStart, _prevInterpEnd;
+    private Vector3   _prevInterpStartPos, _prevInterpEndPos;
+    private Vector3   _prevInterpStartTan, _prevInterpEndTan;
+
+    private float _prevStraightLength;
 
     // ============================================================
 
     void OnEnable()
     {
+        EditorApplication.update  += OnEditorUpdate;
         Selection.selectionChanged += OnSelectionChanged;
-        EditorApplication.update   += OnEditorUpdate;
-        OnSelectionChanged();
+        TrySelectFromScene();
     }
 
     void OnDisable()
     {
+        EditorApplication.update  -= OnEditorUpdate;
         Selection.selectionChanged -= OnSelectionChanged;
-        EditorApplication.update   -= OnEditorUpdate;
     }
 
     private void OnSelectionChanged()
     {
-        var go = Selection.activeGameObject;
-        _target = go != null ? go.GetComponent<BezierRoadDeformer>() : null;
-        CachePivotTransforms();
-        CacheParamValues();
-        Repaint();
+        if (Selection.activeGameObject == null) return;
+        var d = Selection.activeGameObject.GetComponent<BezierRoadDeformer>();
+        if (d != null && d != _target)
+        {
+            _target = d;
+            CacheAll();
+            Repaint();
+        }
+    }
+
+    private void TrySelectFromScene()
+    {
+        if (Selection.activeGameObject != null)
+        {
+            var d = Selection.activeGameObject.GetComponent<BezierRoadDeformer>();
+            if (d != null) { _target = d; CacheAll(); }
+        }
     }
 
     // ============================================================
-    // Change Detection → auto-preview
+    // Change Detection + Auto-Update
     // ============================================================
 
     private void OnEditorUpdate()
     {
-        if (_target == null || !_previewEnabled) return;
+        if (_target == null) return;
+        if (!_target.IsPreviewActive()) return;
 
-        bool changed = (_target.curveMode == CurveMode.Pivot
-            ? DetectPivotChanges()
-            : DetectParamChanges())
-            || DetectDeformChanges();
-
-        if (changed && _target.sourceMeshEntries != null && _target.sourceMeshEntries.Count > 0)
+        bool changed = DetectChanges();
+        if (changed)
         {
-            if (_target.curveMode == CurveMode.Parameter) CacheParamValues();
-            CachePivotTransforms();
-            CacheDeformValues();
+            if (_target.curveMode == CurveMode.Curve && _target.paramAutoCalcDesignSpeed)
+            {
+                float newSpeed = _target.CalcDesignSpeedFromR(_target.paramR);
+                if (!Mathf.Approximately(newSpeed, _target.paramDesignSpeed))
+                {
+                    Undo.RecordObject(_target, "Auto Calc Design Speed");
+                    _target.paramDesignSpeed = newSpeed;
+                    EditorUtility.SetDirty(_target);
+                }
+            }
+            if (_target.curveMode == CurveMode.Curve && _target.paramAutoApplyCant)
+            {
+                float nc = _target.CalcCantAngle();
+                if (!Mathf.Approximately(nc, _target.paramCantAngle))
+                {
+                    Undo.RecordObject(_target, "Auto Calc Cant");
+                    _target.paramCantAngle = nc;
+                    EditorUtility.SetDirty(_target);
+                }
+            }
+            if (_target.curveMode == CurveMode.Curve && _target.paramAutoCalcEasement)
+            {
+                float ne = _target.CalcEasementLengthFromSpeed(_target.paramDesignSpeed);
+                if (!Mathf.Approximately(ne, _target.paramEasementLength))
+                {
+                    Undo.RecordObject(_target, "Auto Calc Easement");
+                    _target.paramEasementLength = ne;
+                    EditorUtility.SetDirty(_target);
+                }
+            }
+
+            CacheAll();
+            _target.arcLengthLUT = null;
             _target.UpdatePreview();
             EditorUtility.SetDirty(_target);
             Repaint();
         }
     }
 
-    private bool DetectPivotChanges()
+    private bool DetectChanges()
     {
-        if (_target.pivots == null) return false;
-        if (_target.pivots.Count != _prevPivotCount) return true;
-        if (_target.handleLength != _prevHandleLength) return true;
-        for (int i = 0; i < _target.pivots.Count; i++)
+        if (_target.curveMode       != _prevCurveMode)       return true;
+        if (_target.deformMode      != _prevDeformMode)      return true;
+        if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
+
+        switch (_target.curveMode)
         {
-            if (_target.pivots[i] == null) continue;
-            if (i >= _prevPositions.Count) return true;
-            if (_target.pivots[i].position != _prevPositions[i]) return true;
-            if (_target.pivots[i].rotation != _prevRotations[i]) return true;
+            case CurveMode.Curve:
+                return _target.paramR              != _prevParamR
+                    || _target.paramAngle          != _prevParamAngle
+                    || _target.paramTurnRight      != _prevTurnRight
+                    || _target.paramCantAngle      != _prevParamCant
+                    || _target.paramGrade          != _prevParamGrade
+                    || _target.paramGradeVerticalCurve != _prevGradeVerticalCurve
+                    || _target.paramUseEasement    != _prevUseEasement
+                    || _target.paramEasementLength != _prevParamEaseLen
+                    || _target.paramAutoCalcDesignSpeed != _prevAutoDesignSpeed
+                    || _target.paramDesignSpeed         != _prevDesignSpeed
+                    || _target.paramFrictionCoeff       != _prevFrictionCoeff
+                    || _target.paramAutoCalcFriction    != _prevAutoFriction
+                    || _target.paramAutoApplyCant       != _prevAutoApplyCant
+                    || _target.paramAutoCalcEasement    != _prevAutoEasement;
+
+            case CurveMode.Interpolation:
+                return _target.interpStartObject != _prevInterpStart
+                    || _target.interpEndObject   != _prevInterpEnd
+                    || (_target.interpStartObject != null && _target.interpStartObject.position != _prevInterpStartPos)
+                    || (_target.interpEndObject   != null && _target.interpEndObject.position   != _prevInterpEndPos)
+                    || _target.interpStartTangent != _prevInterpStartTan
+                    || _target.interpEndTangent   != _prevInterpEndTan;
+
+            case CurveMode.Straight:
+                return _target.paramStraightLength     != _prevStraightLength
+                    || _target.paramGrade              != _prevParamGrade
+                    || _target.paramGradeVerticalCurve != _prevGradeVerticalCurve;
         }
         return false;
     }
 
-    private bool DetectParamChanges()
-    {
-        return _target.paramR              != _prevParamR
-            || _target.paramAngle          != _prevParamAngle
-            || _target.paramCantAngle      != _prevParamCant
-            || _target.paramGrade          != _prevParamGrade
-            || _target.paramUseEasement    != _prevParamEase
-            || _target.paramEasementLength != _prevParamEaseLen
-            || _target.paramTurnRight      != _prevParamTurnRight;
-    }
-
-    private bool DetectDeformChanges()
-    {
-        return _target.deformMode      != _prevDeformMode
-            || _target.subdivisions    != _prevSubdivisions
-            || _target.tileAxisPadding != _prevTileAxisPadding;
-    }
-
-    private void CacheDeformValues()
+    private void CacheAll()
     {
         if (_target == null) return;
-        _prevDeformMode      = _target.deformMode;
-        _prevSubdivisions    = _target.subdivisions;
-        _prevTileAxisPadding = _target.tileAxisPadding;
-    }
-
-    private void CachePivotTransforms()
-    {
-        _prevPositions.Clear();
-        _prevRotations.Clear();
-        if (_target?.pivots == null) return;
-        foreach (var p in _target.pivots)
-        {
-            if (p == null) continue;
-            _prevPositions.Add(p.position);
-            _prevRotations.Add(p.rotation);
-        }
-        _prevPivotCount   = _target.pivots.Count;
-        _prevHandleLength = _target.handleLength;
-    }
-
-    private void CacheParamValues()
-    {
-        if (_target == null) return;
-        _prevParamR          = _target.paramR;
-        _prevParamAngle      = _target.paramAngle;
-        _prevParamCant       = _target.paramCantAngle;
-        _prevParamGrade      = _target.paramGrade;
-        _prevParamEase       = _target.paramUseEasement;
-        _prevParamEaseLen    = _target.paramEasementLength;
-        _prevParamTurnRight  = _target.paramTurnRight;
+        _prevCurveMode        = _target.curveMode;
+        _prevDeformMode       = _target.deformMode;
+        _prevTileAxisPadding  = _target.tileAxisPadding;
+        _prevParamR           = _target.paramR;
+        _prevParamAngle       = _target.paramAngle;
+        _prevTurnRight        = _target.paramTurnRight;
+        _prevParamCant        = _target.paramCantAngle;
+        _prevParamGrade       = _target.paramGrade;
+        _prevGradeVerticalCurve = _target.paramGradeVerticalCurve;
+        _prevUseEasement        = _target.paramUseEasement;
+        _prevParamEaseLen       = _target.paramEasementLength;
+        _prevAutoDesignSpeed  = _target.paramAutoCalcDesignSpeed;
+        _prevDesignSpeed      = _target.paramDesignSpeed;
+        _prevFrictionCoeff    = _target.paramFrictionCoeff;
+        _prevAutoFriction     = _target.paramAutoCalcFriction;
+        _prevAutoApplyCant    = _target.paramAutoApplyCant;
+        _prevAutoEasement     = _target.paramAutoCalcEasement;
+        _prevInterpStart      = _target.interpStartObject;
+        _prevInterpEnd        = _target.interpEndObject;
+        _prevInterpStartPos   = _target.interpStartObject != null ? _target.interpStartObject.position : Vector3.zero;
+        _prevInterpEndPos     = _target.interpEndObject   != null ? _target.interpEndObject.position   : Vector3.zero;
+        _prevInterpStartTan   = _target.interpStartTangent;
+        _prevInterpEndTan     = _target.interpEndTangent;
+        _prevStraightLength   = _target.paramStraightLength;
     }
 
     // ============================================================
@@ -162,85 +189,97 @@ public class BezierRoadDeformerWindow : EditorWindow
 
     void OnGUI()
     {
+        // Header: target selector
         DrawHeader();
 
         if (_target == null)
         {
-            DrawNoTarget();
+            EditorGUILayout.HelpBox("BezierRoadDeformer が選択されていません。\nHierarchy でオブジェクトを選択してください。", MessageType.Info);
             return;
         }
 
+        // Preview indicator
+        DrawPreviewToggle();
+        EditorGUILayout.Space(4);
+
         _scroll = EditorGUILayout.BeginScrollView(_scroll);
-
         DrawBaseObjectSection();
-        DrawSeparator();
+        EditorGUILayout.Space(6);
         DrawCurveModeSection();
-        DrawSeparator();
+        EditorGUILayout.Space(6);
         DrawDeformModeSection();
-        DrawSeparator();
+        EditorGUILayout.Space(6);
         DrawPrefabPlacementSection();
-        DrawSeparator();
-        DrawActionButtons();
-
+        EditorGUILayout.Space(8);
+        DrawBakeButton();
         EditorGUILayout.EndScrollView();
     }
 
-    // ---- Header ------------------------------------------------
+    // ---- Header ---------------------------------------------
 
     private void DrawHeader()
     {
+        EditorGUILayout.LabelField("Sizimityper's Mesh Deformer", EditorStyles.boldLabel);
+
+        EditorGUI.BeginChangeCheck();
+        var newTarget = (BezierRoadDeformer)EditorGUILayout.ObjectField(
+            "対象コンポーネント", _target, typeof(BezierRoadDeformer), true);
+        if (EditorGUI.EndChangeCheck())
+        {
+            _target = newTarget;
+            CacheAll();
+        }
         EditorGUILayout.Space(4);
-        using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-        {
-            GUILayout.Label("Sizimityper's Mesh Deformer", EditorStyles.boldLabel);
-            GUILayout.FlexibleSpace();
-
-            if (_target != null && GUILayout.Button("Ping", EditorStyles.toolbarButton, GUILayout.Width(40)))
-                EditorGUIUtility.PingObject(_target.gameObject);
-        }
-
-        // Preview status bar
-        if (_target != null)
-        {
-            var prevBg = GUI.backgroundColor;
-            GUI.backgroundColor = _previewEnabled ? new Color(0.3f, 0.9f, 0.4f) : new Color(0.7f, 0.7f, 0.7f);
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.helpBox))
-            {
-                GUI.backgroundColor = prevBg;
-                string icon  = _previewEnabled ? "● " : "○ ";
-                string label = _previewEnabled ? "プレビュー ON — 変形をリアルタイム更新中" : "プレビュー OFF";
-                GUILayout.Label(icon + label, EditorStyles.miniLabel);
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button(_previewEnabled ? "停止" : "開始", EditorStyles.miniButton, GUILayout.Width(42)))
-                    SetPreviewEnabled(!_previewEnabled);
-            }
-        }
-
-        EditorGUILayout.Space(2);
     }
 
-    // ---- No target ---------------------------------------------
+    // ---- Preview Toggle -------------------------------------
 
-    private void DrawNoTarget()
+    private void DrawPreviewToggle()
     {
-        EditorGUILayout.Space(20);
-        EditorGUILayout.HelpBox(
-            "シーン上の BezierRoadDeformer コンポーネントを持つ\nGameObject を選択してください。",
-            MessageType.Info);
+        bool isPreview = _target != null && _target.IsPreviewActive();
+        var prevBg = GUI.backgroundColor;
+        GUI.backgroundColor = isPreview ? new Color(0.4f, 1f, 0.4f) : new Color(0.9f, 0.9f, 0.9f);
 
-        EditorGUILayout.Space(8);
-
-        if (GUILayout.Button("新規 GameObject を作成して追加"))
+        if (GUILayout.Button(isPreview ? "■ PREVIEW ON  [クリックでOFF]" : "□ PREVIEW OFF [クリックでON]",
+            GUILayout.Height(32)))
         {
-            var go = new GameObject("BezierRoad");
-            Undo.RegisterCreatedObjectUndo(go, "Create BezierRoad");
-            Undo.AddComponent<BezierRoadDeformer>(go);
-            Selection.activeGameObject = go;
-            OnSelectionChanged();
+            SetPreviewEnabled(!isPreview);
         }
+        GUI.backgroundColor = prevBg;
     }
 
-    // ---- Sections (same logic as CustomEditor) -----------------
+    private void SetPreviewEnabled(bool enable)
+    {
+        if (_target == null) return;
+
+        if (!enable)
+        {
+            Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Disable Preview");
+            _target.ClearPreviewObjects();
+        }
+        else
+        {
+            if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0)
+            {
+                if (_target.sourceParentObject != null)
+                {
+                    Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Initialize");
+                    _target.Initialize();
+                    CacheAll();
+                }
+                else
+                {
+                    EditorUtility.DisplayDialog("Preview Error", "ソース親オブジェクトを設定してください。", "OK");
+                    return;
+                }
+            }
+            _target.arcLengthLUT = null;
+            _target.UpdatePreview();
+        }
+        EditorUtility.SetDirty(_target);
+    }
+
+    // ---- Base Object ----------------------------------------
 
     private void DrawBaseObjectSection()
     {
@@ -250,37 +289,30 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.BeginChangeCheck();
         var newParent = (GameObject)EditorGUILayout.ObjectField(
             "ソース親オブジェクト", _target.sourceParentObject, typeof(GameObject), true);
-        var newAxis = (AxisDirection)EditorGUILayout.EnumPopup("軸線方向", _target.axisDirection);
+        var newAxis   = (AxisDirection)EditorGUILayout.EnumPopup("軸線方向", _target.axisDirection);
+        float newPad  = EditorGUILayout.Slider("タイル境界パディング", _target.tileAxisPadding, 0f, 0.1f);
 
         if (EditorGUI.EndChangeCheck())
         {
-            Undo.RecordObject(_target, "Change Source Parent");
+            Undo.RecordObject(_target, "Change Base Settings");
+            bool parentChanged = newParent != _target.sourceParentObject;
             _target.sourceParentObject = newParent;
             _target.axisDirection      = newAxis;
-            if (_target.sourceParentObject != null)
+            _target.tileAxisPadding    = newPad;
+
+            if (parentChanged && newParent != null)
             {
-                Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Initialize Road Deformer");
+                Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Initialize");
                 _target.Initialize();
-                CachePivotTransforms();
+                CacheAll();
             }
             EditorUtility.SetDirty(_target);
         }
 
-        // 収集済みメッシュ一覧
-        if (_target.sourceMeshEntries != null && _target.sourceMeshEntries.Count > 0)
-        {
-            EditorGUILayout.LabelField($"検出メッシュ ({_target.sourceMeshEntries.Count}):", EditorStyles.miniLabel);
-            EditorGUI.indentLevel++;
-            foreach (var entry in _target.sourceMeshEntries)
-                EditorGUILayout.LabelField(entry.mesh != null ? entry.mesh.name : "(null)", EditorStyles.miniLabel);
-            EditorGUI.indentLevel--;
-        }
-
-        using (new EditorGUI.DisabledGroupScope(true))
-            EditorGUILayout.FloatField("メッシュ長 (m)", _target.meshLength);
-
         EditorGUI.indentLevel--;
     }
+
+    // ---- Curve Mode -----------------------------------------
 
     private void DrawCurveModeSection()
     {
@@ -295,209 +327,184 @@ public class BezierRoadDeformerWindow : EditorWindow
             _target.curveMode        = newMode;
             _target.arcLengthLUT     = null;
             _target.paramPointsBuilt = false;
+            CacheAll();
             EditorUtility.SetDirty(_target);
         }
 
-        if (_target.curveMode == CurveMode.Pivot)
-            DrawPivotModeUI();
-        else
-            DrawParameterModeUI();
+        EditorGUILayout.Space(2);
+        switch (_target.curveMode)
+        {
+            case CurveMode.Curve:         DrawCurveModeUI();         break;
+            case CurveMode.Interpolation: DrawInterpolationModeUI(); break;
+            case CurveMode.Straight:      DrawStraightModeUI();      break;
+        }
 
         EditorGUI.indentLevel--;
     }
 
-    private void DrawPivotModeUI()
+    private void DrawCurveModeUI()
     {
         EditorGUI.BeginChangeCheck();
-        float newHL = EditorGUILayout.FloatField("ハンドル長さ", _target.handleLength);
+        float newR      = EditorGUILayout.FloatField("R (曲率半径) m", _target.paramR);
+        float newAngle  = EditorGUILayout.FloatField("展開角 °",        _target.paramAngle);
+        bool  newRight  = EditorGUILayout.Toggle("右カーブ",            _target.paramTurnRight);
+        float newGrade  = EditorGUILayout.FloatField("縦断勾配 %",       _target.paramGrade);
+        bool  newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）", _target.paramGradeVerticalCurve);
+        bool  newEase   = EditorGUILayout.Toggle("緩和曲線",             _target.paramUseEasement);
         if (EditorGUI.EndChangeCheck())
         {
-            Undo.RecordObject(_target, "Change Handle Length");
-            _target.handleLength = newHL;
-            _target.arcLengthLUT = null;
+            Undo.RecordObject(_target, "Change Curve Params");
+            _target.paramR                  = Mathf.Max(0.1f, newR);
+            _target.paramAngle              = Mathf.Clamp(newAngle, 0f, 720f);
+            _target.paramTurnRight          = newRight;
+            _target.paramGrade             = newGrade;
+            _target.paramGradeVerticalCurve = newVCurve;
+            _target.paramUseEasement        = newEase;
+            _target.arcLengthLUT            = null;
+            _target.paramPointsBuilt        = false;
             EditorUtility.SetDirty(_target);
         }
 
-        EditorGUILayout.LabelField("ピボット一覧:");
-        if (_target.pivots != null)
-        {
-            for (int i = 0; i < _target.pivots.Count; i++)
-            {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    string label = _target.pivots[i] != null ? _target.pivots[i].name : "(null)";
-                    EditorGUILayout.LabelField($"  {i}: {label}");
+        // --- 設計速度・自動計算 ---
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("  設計速度から自動計算", EditorStyles.miniLabel);
 
-                    if (i > 0 && i < _target.pivots.Count - 1)
-                    {
-                        if (GUILayout.Button("−", GUILayout.Width(24)))
-                        {
-                            Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Remove Pivot");
-                            _target.RemovePivot(i);
-                            EditorUtility.SetDirty(_target);
-                            GUIUtility.ExitGUI();
-                            return;
-                        }
-                    }
-                }
+        EditorGUI.BeginChangeCheck();
+        bool  newAutoSpeed = EditorGUILayout.Toggle("設計速度をRから自動取得", _target.paramAutoCalcDesignSpeed);
+        float newSpeed;
+        if (_target.paramAutoCalcDesignSpeed)
+        {
+            float autoSpeed = _target.CalcDesignSpeedFromR(_target.paramR);
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  設計速度 (算出) km/h", autoSpeed);
+            newSpeed = autoSpeed;
+        }
+        else
+        {
+            newSpeed = EditorGUILayout.FloatField("設計速度 km/h", _target.paramDesignSpeed);
+        }
+        bool  newAutoFric = EditorGUILayout.Toggle("摩擦係数を自動取得",   _target.paramAutoCalcFriction);
+        bool  newAutoEase = EditorGUILayout.Toggle("緩和区間長を自動設定", _target.paramAutoCalcEasement);
+        bool  newAutoCant = EditorGUILayout.Toggle("カント角を自動適用",    _target.paramAutoApplyCant);
+        if (EditorGUI.EndChangeCheck())
+        {
+            Undo.RecordObject(_target, "Change Auto Calc");
+            _target.paramAutoCalcDesignSpeed = newAutoSpeed;
+            _target.paramDesignSpeed         = Mathf.Max(0f, newSpeed);
+            _target.paramAutoCalcFriction    = newAutoFric;
+            _target.paramAutoCalcEasement    = newAutoEase;
+            _target.paramAutoApplyCant       = newAutoCant;
+            EditorUtility.SetDirty(_target);
+        }
+
+        // Readonly displays
+        using (new EditorGUI.DisabledGroupScope(true))
+        {
+            if (_target.paramAutoCalcFriction)
+                EditorGUILayout.FloatField("  摩擦係数 (算出)", _target.CalcFrictionFromSpeed(_target.paramDesignSpeed));
+            if (_target.paramAutoCalcEasement && _target.paramUseEasement)
+                EditorGUILayout.FloatField("  緩和区間長 (算出) m", _target.CalcEasementLengthFromSpeed(_target.paramDesignSpeed));
+            if (_target.paramAutoApplyCant)
+                EditorGUILayout.FloatField("  カント角 (算出) °", _target.CalcCantAngle());
+        }
+
+        if (!_target.paramAutoCalcFriction)
+        {
+            EditorGUI.BeginChangeCheck();
+            float f = EditorGUILayout.FloatField("横すべり摩擦係数", _target.paramFrictionCoeff);
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(_target, "Change Friction");
+                _target.paramFrictionCoeff = f;
+                EditorUtility.SetDirty(_target);
             }
         }
-
-        if (GUILayout.Button("+ ピボット追加"))
+        if (_target.paramUseEasement && !_target.paramAutoCalcEasement)
         {
-            Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Add Pivot");
-            _target.AddPivot();
-            EditorUtility.SetDirty(_target);
-        }
-    }
-
-    private void DrawParameterModeUI()
-    {
-        EditorGUI.BeginChangeCheck();
-        bool  newTurnRight = EditorGUILayout.Toggle("右カーブ",          _target.paramTurnRight);
-        float newR         = EditorGUILayout.FloatField("R (曲率半径) m",  _target.paramR);
-        float newAngle     = EditorGUILayout.FloatField("角度 (展開角) °", _target.paramAngle);
-        float newCant      = EditorGUILayout.FloatField("カント角 °",      _target.paramCantAngle);
-        float newGrade     = EditorGUILayout.FloatField("縦断勾配 %",      _target.paramGrade);
-        bool  newEase      = EditorGUILayout.Toggle("緩和曲線",            _target.paramUseEasement);
-        float newEaseLen   = _target.paramEasementLength;
-        if (newEase)
-            newEaseLen = EditorGUILayout.FloatField("緩和区間長 m", _target.paramEasementLength);
-
-        if (EditorGUI.EndChangeCheck())
-        {
-            Undo.RecordObject(_target, "Change Parameter Values");
-            _target.paramTurnRight       = newTurnRight;
-            _target.paramR               = Mathf.Max(0.1f, newR);
-            _target.paramAngle           = Mathf.Clamp(newAngle, 0f, 360f);
-            _target.paramCantAngle       = newCant;
-            _target.paramGrade           = newGrade;
-            _target.paramUseEasement     = newEase;
-            _target.paramEasementLength  = Mathf.Max(0f, newEaseLen);
-            _target.arcLengthLUT         = null;
-            _target.paramPointsBuilt     = false;
-            EditorUtility.SetDirty(_target);
-        }
-
-        EditorGUILayout.Space(4);
-        DrawCantCalcUI();
-
-        EditorGUILayout.Space(4);
-        if (GUILayout.Button("ピボットに変換"))
-        {
-            if (EditorUtility.DisplayDialog("確認",
-                "パラメータモードの内容をピボットに変換します。\nこの操作は元に戻せません。よろしいですか？",
-                "変換する", "キャンセル"))
+            EditorGUI.BeginChangeCheck();
+            float el = EditorGUILayout.FloatField("緩和区間長 m", _target.paramEasementLength);
+            if (EditorGUI.EndChangeCheck())
             {
-                Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Convert to Pivot");
-                _target.ConvertParameterToPivot();
+                Undo.RecordObject(_target, "Change Easement Length");
+                _target.paramEasementLength = Mathf.Max(0f, el);
+                _target.arcLengthLUT        = null;
+                _target.paramPointsBuilt    = false;
+                EditorUtility.SetDirty(_target);
+            }
+        }
+        if (!_target.paramAutoApplyCant)
+        {
+            EditorGUI.BeginChangeCheck();
+            float ca = EditorGUILayout.FloatField("カント角 °", _target.paramCantAngle);
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(_target, "Change Cant Angle");
+                _target.paramCantAngle   = ca;
+                _target.arcLengthLUT     = null;
+                _target.paramPointsBuilt = false;
                 EditorUtility.SetDirty(_target);
             }
         }
     }
 
-    private void DrawCantCalcUI()
+    private void DrawInterpolationModeUI()
     {
-        EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-        EditorGUILayout.LabelField("カント自動計算 (道路構造令)", EditorStyles.boldLabel);
-        EditorGUI.indentLevel++;
-
         EditorGUI.BeginChangeCheck();
-        bool  newAutoSpeed    = EditorGUILayout.Toggle("設計速度を R から自動推定",        _target.paramAutoCalcSpeed);
-        float newV = _target.paramDesignSpeed;
-        if (!newAutoSpeed)
-            newV = EditorGUILayout.FloatField("設計速度 V (km/h)", _target.paramDesignSpeed);
-        bool  newAutoFriction = EditorGUILayout.Toggle("横すべり摩擦係数を速度から自動算出", _target.paramAutoCalcFriction);
-        float newF = _target.paramFrictionCoeff;
-        if (!newAutoFriction)
-            newF = EditorGUILayout.FloatField("横すべり摩擦係数 f", _target.paramFrictionCoeff);
-        float newMaxI          = EditorGUILayout.FloatField("最大片勾配 (例: 0.08)",    _target.paramMaxSuperelevation);
-        bool  newAutoApply     = EditorGUILayout.Toggle("カント角を自動適用",           _target.paramAutoApplyCant);
-        bool  newAutoEasement  = EditorGUILayout.Toggle("緩和区間長を自動算出",         _target.paramAutoCalcEasement);
+        var newStart    = (Transform)EditorGUILayout.ObjectField("始点オブジェクト", _target.interpStartObject, typeof(Transform), true);
+        var newStartTan = EditorGUILayout.Vector3Field("始点接線方向",              _target.interpStartTangent);
+        var newEnd      = (Transform)EditorGUILayout.ObjectField("終点オブジェクト", _target.interpEndObject,   typeof(Transform), true);
+        var newEndTan   = EditorGUILayout.Vector3Field("終点接線方向",              _target.interpEndTangent);
         if (EditorGUI.EndChangeCheck())
         {
-            Undo.RecordObject(_target, "Change Cant Calc Params");
-            _target.paramAutoCalcSpeed     = newAutoSpeed;
-            _target.paramDesignSpeed       = Mathf.Max(0f, newV);
-            _target.paramAutoCalcFriction  = newAutoFriction;
-            _target.paramFrictionCoeff     = Mathf.Clamp(newF, 0f, 1f);
-            _target.paramMaxSuperelevation = Mathf.Clamp(newMaxI, 0f, 0.2f);
-            _target.paramAutoApplyCant     = newAutoApply;
-            _target.paramAutoCalcEasement  = newAutoEasement;
+            Undo.RecordObject(_target, "Change Interpolation Params");
+            _target.interpStartObject  = newStart;
+            _target.interpStartTangent = newStartTan;
+            _target.interpEndObject    = newEnd;
+            _target.interpEndTangent   = newEndTan;
+            _target.arcLengthLUT       = null;
+            _target.paramPointsBuilt   = false;
             EditorUtility.SetDirty(_target);
         }
-
-        // プレビュー表示
-        float estSpeed    = _target.paramAutoCalcSpeed    ? _target.CalcDesignSpeedFromR()               : _target.paramDesignSpeed;
-        float estFriction = _target.paramAutoCalcFriction ? _target.CalcFrictionFromSpeed(estSpeed)      : _target.paramFrictionCoeff;
-        float estEasement = _target.CalcEasementLengthFromSpeed(estSpeed);
-        float previewCant = _target.CalcCantAngle();
-        float previewI    = Mathf.Tan(previewCant * Mathf.Deg2Rad);
-        if (_target.paramAutoCalcSpeed)
-            EditorGUILayout.LabelField($"推定速度: {estSpeed:F0} km/h", EditorStyles.miniLabel);
-        if (_target.paramAutoCalcFriction)
-            EditorGUILayout.LabelField($"算出摩擦係数: f = {estFriction:F3}", EditorStyles.miniLabel);
-        EditorGUILayout.LabelField($"→ 片勾配 i = {previewI * 100f:F2} %  /  カント角 = {previewCant:F3} °", EditorStyles.miniLabel);
-        if (_target.paramAutoCalcEasement)
-            EditorGUILayout.LabelField($"算出緩和区間長: {estEasement:F1} m", EditorStyles.miniLabel);
-
-        // 自動適用
-        bool needsRebuild = false;
-        if (_target.paramAutoApplyCant && !Mathf.Approximately(_target.paramCantAngle, previewCant))
-        {
-            Undo.RecordObject(_target, "Auto Apply Cant");
-            _target.paramCantAngle = previewCant;
-            needsRebuild = true;
-        }
-        if (_target.paramAutoCalcEasement && _target.paramUseEasement
-            && !Mathf.Approximately(_target.paramEasementLength, estEasement))
-        {
-            Undo.RecordObject(_target, "Auto Apply Easement");
-            _target.paramEasementLength = estEasement;
-            needsRebuild = true;
-        }
-        if (needsRebuild)
-        {
-            _target.arcLengthLUT     = null;
-            _target.paramPointsBuilt = false;
-            EditorUtility.SetDirty(_target);
-        }
-
-        if (!_target.paramAutoApplyCant && GUILayout.Button("カント角に適用"))
-        {
-            Undo.RecordObject(_target, "Apply Calc Cant");
-            _target.paramCantAngle   = previewCant;
-            _target.arcLengthLUT     = null;
-            _target.paramPointsBuilt = false;
-            EditorUtility.SetDirty(_target);
-        }
-
-        EditorGUI.indentLevel--;
-        EditorGUILayout.EndVertical();
     }
+
+    private void DrawStraightModeUI()
+    {
+        EditorGUI.BeginChangeCheck();
+        float newLen    = EditorGUILayout.FloatField("長さ m",           _target.paramStraightLength);
+        float newGrade  = EditorGUILayout.FloatField("縦断勾配 %",       _target.paramGrade);
+        bool  newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）", _target.paramGradeVerticalCurve);
+        if (EditorGUI.EndChangeCheck())
+        {
+            Undo.RecordObject(_target, "Change Straight Params");
+            _target.paramStraightLength     = Mathf.Max(0.1f, newLen);
+            _target.paramGrade              = newGrade;
+            _target.paramGradeVerticalCurve = newVCurve;
+            _target.arcLengthLUT            = null;
+            _target.paramPointsBuilt        = false;
+            EditorUtility.SetDirty(_target);
+        }
+    }
+
+    // ---- Deform Mode ----------------------------------------
 
     private void DrawDeformModeSection()
     {
-        EditorGUILayout.LabelField("■ 変形モード", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("■ 端部処理", EditorStyles.boldLabel);
         EditorGUI.indentLevel++;
 
         EditorGUI.BeginChangeCheck();
-        var   newDeform = (DeformMode)EditorGUILayout.EnumPopup("モード", _target.deformMode);
-        int   newSubdiv  = EditorGUILayout.IntSlider("分割数", _target.subdivisions, 1, 100);
-        float newPadding = EditorGUILayout.Slider(
-            new GUIContent("境界パディング (m)", "タイル境界より外側にはみ出した突起ジオメトリを境界に吸収する距離。デフォルト 0.001m。"),
-            _target.tileAxisPadding, 0f, 0.5f);
+        var newDeform = (DeformMode)EditorGUILayout.EnumPopup("端部処理", _target.deformMode);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Deform Mode");
-            _target.deformMode      = newDeform;
-            _target.subdivisions    = newSubdiv;
-            _target.tileAxisPadding = newPadding;
+            _target.deformMode = newDeform;
             EditorUtility.SetDirty(_target);
         }
 
         EditorGUI.indentLevel--;
     }
+
+    // ---- Prefab Placement -----------------------------------
 
     private void DrawPrefabPlacementSection()
     {
@@ -515,26 +522,22 @@ public class BezierRoadDeformerWindow : EditorWindow
             EditorGUI.indentLevel++;
 
             EditorGUI.BeginChangeCheck();
-            rule.prefab      = (GameObject)EditorGUILayout.ObjectField("プレハブ",       rule.prefab,      typeof(GameObject), false);
-            rule.interval    = EditorGUILayout.FloatField("間隔 m",         rule.interval);
+            rule.prefab      = (GameObject)EditorGUILayout.ObjectField("プレハブ",     rule.prefab,      typeof(GameObject), false);
+            rule.intervalM   = EditorGUILayout.FloatField("間隔 m",        rule.intervalM);
             rule.offsetRight = EditorGUILayout.FloatField("右オフセット m", rule.offsetRight);
             rule.offsetUp    = EditorGUILayout.FloatField("上オフセット m", rule.offsetUp);
-            rule.followCant  = EditorGUILayout.Toggle("カント追従",         rule.followCant);
-            if (EditorGUI.EndChangeCheck())
-                EditorUtility.SetDirty(_target);
+            rule.followCant  = EditorGUILayout.Toggle("カント追従",          rule.followCant);
+            if (EditorGUI.EndChangeCheck()) EditorUtility.SetDirty(_target);
 
             EditorGUI.indentLevel--;
-
             if (GUILayout.Button("ルール削除"))
             {
                 Undo.RecordObject(_target, "Remove Placement Rule");
                 _target.placementRules.RemoveAt(i);
                 EditorUtility.SetDirty(_target);
                 EditorGUILayout.EndVertical();
-                GUIUtility.ExitGUI();
                 return;
             }
-
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space(2);
         }
@@ -549,131 +552,70 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel--;
     }
 
-    private void DrawActionButtons()
+    // ---- Bake -----------------------------------------------
+
+    private void DrawBakeButton()
     {
-        using (new EditorGUILayout.HorizontalScope())
-        {
-            var prevBg = GUI.backgroundColor;
-            GUI.backgroundColor = _previewEnabled ? new Color(0.3f, 0.9f, 0.4f) : Color.white;
-            if (GUILayout.Button(_previewEnabled ? "Preview ●" : "Preview ○"))
-                SetPreviewEnabled(!_previewEnabled);
-            GUI.backgroundColor = prevBg;
-
-            if (GUILayout.Button("Bake"))
-                DoBake();
-        }
+        if (GUILayout.Button("Bake", GUILayout.Height(28)))
+            DoBake();
     }
-
-    // ============================================================
-    // Bake
-    // ============================================================
 
     private void DoBake()
     {
+        if (_target == null) return;
+
         if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0)
         {
-            EditorUtility.DisplayDialog("Bake Error", "ソースメッシュが設定されていません。", "OK");
-            return;
+            if (_target.sourceParentObject != null)
+            {
+                _target.Initialize();
+                CacheAll();
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("Bake Error", "ソース親オブジェクトが設定されていません。", "OK");
+                return;
+            }
         }
 
-        var deformedMeshes = _target.DeformAllMeshes();
-        if (deformedMeshes == null || deformedMeshes.Count == 0)
-        {
-            EditorUtility.DisplayDialog("Bake Error", "変形メッシュの生成に失敗しました。", "OK");
-            return;
-        }
+        Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake");
 
-        Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake Road Mesh");
-
+        var meshes = _target.DeformAllMeshes();
         for (int i = 0; i < _target.sourceMeshEntries.Count; i++)
         {
             var entry = _target.sourceMeshEntries[i];
-            var mesh  = deformedMeshes[i];
+            var mesh  = i < meshes.Count ? meshes[i] : null;
             if (mesh == null) continue;
 
-            if (entry.outputObject == null)
+            GameObject go;
+            if (entry.outputObject != null)
             {
-                entry.outputObject = new GameObject();
-                entry.outputObject.transform.SetParent(_target.transform, false);
-                entry.outputObject.AddComponent<MeshFilter>();
-                entry.outputObject.AddComponent<MeshRenderer>();
+                go           = entry.outputObject;
+                go.hideFlags = HideFlags.None;
+            }
+            else
+            {
+                go = new GameObject(entry.meshName ?? $"Mesh_{i}");
+                go.transform.SetParent(_target.transform, false);
             }
 
-            entry.outputObject.name      = entry.mesh != null ? entry.mesh.name : _target.gameObject.name;
-            entry.outputObject.hideFlags = HideFlags.None;
+            var mf = go.GetComponent<MeshFilter>() ?? go.AddComponent<MeshFilter>();
+            mf.sharedMesh = mesh;
+            var mr = go.GetComponent<MeshRenderer>() ?? go.AddComponent<MeshRenderer>();
+            if (entry.materials != null) mr.sharedMaterials = entry.materials;
 
-            var mf = entry.outputObject.GetComponent<MeshFilter>();
-            if (mf != null) mf.sharedMesh = mesh;
-
-            var mr = entry.outputObject.GetComponent<MeshRenderer>();
-            if (mr != null) mr.sharedMaterials = entry.materials ?? new Material[0];
-
+            go.hideFlags       = HideFlags.None;
             entry.outputObject = null;
+            Undo.RegisterCreatedObjectUndo(go, "Bake");
         }
 
-        // プレハブを永続化
         _target.UpdatePrefabPlacements();
         foreach (var go in _target.spawnedPrefabs)
             if (go != null) go.hideFlags = HideFlags.None;
         _target.spawnedPrefabs.Clear();
 
-        // ピボットを削除
-        foreach (var p in _target.pivots)
-            if (p != null) DestroyImmediate(p.gameObject);
-        _target.pivots.Clear();
-
-        // コンポーネントだけ Remove
         DestroyImmediate(_target);
         _target = null;
-
         Repaint();
-    }
-
-    // ============================================================
-    // Preview Toggle
-    // ============================================================
-
-    private void SetPreviewEnabled(bool enabled)
-    {
-        _previewEnabled = enabled;
-        if (_target == null) return;
-
-        if (_previewEnabled)
-        {
-            // まだ初期化されていなければ自動初期化
-            if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0)
-            {
-                if (_target.sourceParentObject != null)
-                {
-                    Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Initialize Road Deformer");
-                    _target.Initialize();
-                    CachePivotTransforms();
-                }
-            }
-            if (_target.sourceMeshEntries != null && _target.sourceMeshEntries.Count > 0)
-            {
-                _target.UpdatePreview();
-                EditorUtility.SetDirty(_target);
-            }
-        }
-        else
-        {
-            // プレビューOFF → プレビュー用メッシュ・プレハブをすべて削除
-            _target.ClearPreviewObjects();
-            _target.ClearSpawnedPrefabs();
-            EditorUtility.SetDirty(_target);
-        }
-    }
-
-    // ============================================================
-    // Helpers
-    // ============================================================
-
-    private static void DrawSeparator()
-    {
-        EditorGUILayout.Space(4);
-        var rect = EditorGUILayout.GetControlRect(false, 1f);
-        EditorGUI.DrawRect(rect, new Color(0.5f, 0.5f, 0.5f, 0.4f));
-        EditorGUILayout.Space(4);
     }
 }
