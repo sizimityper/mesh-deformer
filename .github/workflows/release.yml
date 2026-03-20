@@ -1,12 +1,9 @@
 name: Release VPM Package
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'Packages/com.sizimityper.mesh-deformer/package.json'
-  workflow_dispatch:
+  release:
+    types:
+      - published
 
 jobs:
   release:
@@ -28,14 +25,10 @@ jobs:
           cd Packages/com.sizimityper.mesh-deformer
           zip -r ../../com.sizimityper.mesh-deformer-${{ steps.version.outputs.version }}.zip .
 
-      - name: Create release and upload zip
-        run: |
-          gh release create ${{ steps.version.outputs.version }} \
-            com.sizimityper.mesh-deformer-${{ steps.version.outputs.version }}.zip \
-            --title "${{ steps.version.outputs.version }}" \
-            --notes ""
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload zip to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: com.sizimityper.mesh-deformer-${{ steps.version.outputs.version }}.zip
 
       - name: Trigger VPM listing update
         uses: peter-evans/repository-dispatch@v3
