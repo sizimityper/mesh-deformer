@@ -7,6 +7,7 @@ namespace SizimityperMeshDeformer
     public enum AxisDirection { X, Y, Z }
     public enum CurveMode    { Curve, Interpolation, Straight }
     public enum DeformMode   { Stretch, Cut }
+    public enum TangentAxis  { PosZ, NegZ, PosX, NegX, PosY, NegY }
 
     [Serializable]
     public class SourceMeshEntry
@@ -67,10 +68,12 @@ namespace SizimityperMeshDeformer
         public bool  paramAutoCalcEasement    = true;
 
         // --- Interpolation Mode ---
-        public Transform interpStartObject;
-        public Transform interpEndObject;
-        public Vector3   interpStartTangent = Vector3.forward;
-        public Vector3   interpEndTangent   = Vector3.forward;
+        public Transform   interpStartObject;
+        public Transform   interpEndObject;
+        public TangentAxis interpStartTangentAxis = TangentAxis.PosZ;
+        public TangentAxis interpEndTangentAxis   = TangentAxis.PosZ;
+        [HideInInspector] public Vector3 interpStartTangent = Vector3.forward; // legacy
+        [HideInInspector] public Vector3 interpEndTangent   = Vector3.forward; // legacy
 
         // --- Straight Mode ---
         public float paramStraightLength    = 100f;  // uses paramGrade
@@ -346,24 +349,49 @@ namespace SizimityperMeshDeformer
 
         public float GetCantAtS(float s)
         {
-            if (curveMode != CurveMode.Curve) return 0f;
+            if (curveMode == CurveMode.Straight) return 0f;
 
-            float easLen   = paramUseEasement ? paramEasementLength : 0f;
+            if (curveMode == CurveMode.Interpolation)
+            {
+                float total  = Mathf.Max(totalArcLength, 1e-6f);
+                float easLen = paramUseEasement ? Mathf.Min(Mathf.Max(paramEasementLength, 0f), total * 0.5f) : 0f;
+                if (!paramUseEasement || easLen <= 0f) return paramCantAngle;
+                float midLen = total - 2f * easLen;
+                if (s < easLen)          return Mathf.Lerp(0f, paramCantAngle, s / easLen);
+                if (s < easLen + midLen) return paramCantAngle;
+                return Mathf.Lerp(paramCantAngle, 0f, Mathf.Clamp01((s - easLen - midLen) / easLen));
+            }
+
+            // CurveMode.Curve
+            float easLenC  = paramUseEasement ? paramEasementLength : 0f;
             float R        = Mathf.Max(paramR, 0.1f);
-            float easAngle = easLen > 0f ? easLen / (2f * R) : 0f;
-            float arcLen   = Mathf.Max(0f, R * (paramAngle * Mathf.Deg2Rad - 2f * easAngle));
-            float totalLen = 2f * easLen + arcLen;
+            float easAngle = easLenC > 0f ? easLenC / (2f * R) : 0f;
+            float arcLenC  = Mathf.Max(0f, R * (paramAngle * Mathf.Deg2Rad - 2f * easAngle));
+            float totalLen = 2f * easLenC + arcLenC;
             float cantSign = paramTurnRight ? 1f : -1f;
 
-            if (!paramUseEasement || easLen <= 0f) return cantSign * paramCantAngle;
-            if (s < easLen)              return cantSign * Mathf.Lerp(0f, paramCantAngle, s / easLen);
-            if (s < easLen + arcLen)     return cantSign * paramCantAngle;
-            return cantSign * Mathf.Lerp(0f, paramCantAngle, Mathf.Clamp01((totalLen - s) / easLen));
+            if (!paramUseEasement || easLenC <= 0f) return cantSign * paramCantAngle;
+            if (s < easLenC)              return cantSign * Mathf.Lerp(0f, paramCantAngle, s / easLenC);
+            if (s < easLenC + arcLenC)    return cantSign * paramCantAngle;
+            return cantSign * Mathf.Lerp(0f, paramCantAngle, Mathf.Clamp01((totalLen - s) / easLenC));
         }
 
         // ============================================================
         // Interpolation Mode: Hermite Spline
         // ============================================================
+
+        public Vector3 GetTangentDirection(Transform t, TangentAxis axis)
+        {
+            switch (axis)
+            {
+                case TangentAxis.NegZ: return -t.forward;
+                case TangentAxis.PosX: return  t.right;
+                case TangentAxis.NegX: return -t.right;
+                case TangentAxis.PosY: return  t.up;
+                case TangentAxis.NegY: return -t.up;
+                default:               return  t.forward; // PosZ
+            }
+        }
 
         private void GenerateInterpolationCurve(int resolution = 200)
         {
@@ -371,9 +399,9 @@ namespace SizimityperMeshDeformer
 
             Vector3 p0        = interpStartObject.position;
             Vector3 p1        = interpEndObject.position;
-            float   handleLen = Vector3.Distance(p0, p1) / 3f;
-            Vector3 t0        = interpStartTangent.normalized * handleLen;
-            Vector3 t1        = interpEndTangent.normalized   * handleLen;
+            float   handleLen = Vector3.Distance(p0, p1);
+            Vector3 t0        = GetTangentDirection(interpStartObject, interpStartTangentAxis) * handleLen;
+            Vector3 t1        = GetTangentDirection(interpEndObject,   interpEndTangentAxis)   * handleLen;
 
             int steps     = Mathf.Max(resolution, 10);
             paramPoints   = new List<Vector3>(steps + 1);

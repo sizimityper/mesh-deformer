@@ -21,9 +21,10 @@ public class BezierRoadDeformerWindow : EditorWindow
     private float _prevDesignSpeed, _prevFrictionCoeff;
     private bool  _prevAutoDesignSpeed, _prevAutoFriction, _prevAutoApplyCant, _prevAutoEasement;
 
-    private Transform _prevInterpStart, _prevInterpEnd;
-    private Vector3   _prevInterpStartPos, _prevInterpEndPos;
-    private Vector3   _prevInterpStartTan, _prevInterpEndTan;
+    private Transform   _prevInterpStart, _prevInterpEnd;
+    private Vector3     _prevInterpStartPos, _prevInterpEndPos;
+    private Quaternion  _prevInterpStartRot, _prevInterpEndRot;
+    private TangentAxis _prevInterpStartAxis, _prevInterpEndAxis;
 
     private float _prevStraightLength;
     private bool  _prevStraightAutoGrade;
@@ -76,15 +77,23 @@ public class BezierRoadDeformerWindow : EditorWindow
     {
         if (_target == null) return;
 
-        // プレビューOFF時: パラメータ変更後にシーンを再描画してカーブを可視化
+        bool changed = DetectChanges();
+
+        // プレビューOFF時: 変化があればLUTを無効化してシーンを再描画
         if (!_target.IsPreviewActive())
         {
+            if (changed)
+            {
+                CacheAll();
+                _target.arcLengthLUT    = null;
+                _target.paramPointsBuilt = false;
+                EditorUtility.SetDirty(_target);
+            }
             if (!_target.paramPointsBuilt)
                 SceneView.RepaintAll();
             return;
         }
 
-        bool changed = DetectChanges();
         if (changed)
         {
             if (_target.curveMode == CurveMode.Curve && _target.paramAutoCalcDesignSpeed)
@@ -151,12 +160,17 @@ public class BezierRoadDeformerWindow : EditorWindow
                     || _target.paramAutoCalcEasement    != _prevAutoEasement;
 
             case CurveMode.Interpolation:
-                return _target.interpStartObject != _prevInterpStart
-                    || _target.interpEndObject   != _prevInterpEnd
+                return _target.interpStartObject      != _prevInterpStart
+                    || _target.interpEndObject        != _prevInterpEnd
+                    || _target.interpStartTangentAxis != _prevInterpStartAxis
+                    || _target.interpEndTangentAxis   != _prevInterpEndAxis
                     || (_target.interpStartObject != null && _target.interpStartObject.position != _prevInterpStartPos)
                     || (_target.interpEndObject   != null && _target.interpEndObject.position   != _prevInterpEndPos)
-                    || _target.interpStartTangent != _prevInterpStartTan
-                    || _target.interpEndTangent   != _prevInterpEndTan;
+                    || (_target.interpStartObject != null && _target.interpStartObject.rotation != _prevInterpStartRot)
+                    || (_target.interpEndObject   != null && _target.interpEndObject.rotation   != _prevInterpEndRot)
+                    || _target.paramCantAngle      != _prevParamCant
+                    || _target.paramUseEasement    != _prevUseEasement
+                    || _target.paramEasementLength != _prevParamEaseLen;
 
             case CurveMode.Straight:
                 return _target.paramStraightLength     != _prevStraightLength
@@ -190,10 +204,12 @@ public class BezierRoadDeformerWindow : EditorWindow
         _prevAutoEasement     = _target.paramAutoCalcEasement;
         _prevInterpStart      = _target.interpStartObject;
         _prevInterpEnd        = _target.interpEndObject;
+        _prevInterpStartAxis  = _target.interpStartTangentAxis;
+        _prevInterpEndAxis    = _target.interpEndTangentAxis;
         _prevInterpStartPos   = _target.interpStartObject != null ? _target.interpStartObject.position : Vector3.zero;
         _prevInterpEndPos     = _target.interpEndObject   != null ? _target.interpEndObject.position   : Vector3.zero;
-        _prevInterpStartTan   = _target.interpStartTangent;
-        _prevInterpEndTan     = _target.interpEndTangent;
+        _prevInterpStartRot   = _target.interpStartObject != null ? _target.interpStartObject.rotation : Quaternion.identity;
+        _prevInterpEndRot     = _target.interpEndObject   != null ? _target.interpEndObject.rotation   : Quaternion.identity;
         _prevStraightLength     = _target.paramStraightLength;
         _prevStraightAutoGrade  = _target.paramStraightAutoGrade;
         _prevStraightHeight     = _target.paramStraightHeight;
@@ -566,19 +582,28 @@ public class BezierRoadDeformerWindow : EditorWindow
     private void DrawInterpolationModeUI()
     {
         EditorGUI.BeginChangeCheck();
-        var newStart    = (Transform)EditorGUILayout.ObjectField("始点オブジェクト", _target.interpStartObject, typeof(Transform), true);
-        var newStartTan = EditorGUILayout.Vector3Field("始点接線方向",              _target.interpStartTangent);
-        var newEnd      = (Transform)EditorGUILayout.ObjectField("終点オブジェクト", _target.interpEndObject,   typeof(Transform), true);
-        var newEndTan   = EditorGUILayout.Vector3Field("終点接線方向",              _target.interpEndTangent);
+        EditorGUILayout.HelpBox("始点・終点オブジェクトのRotationが接線方向として使われます。", MessageType.None);
+        var   newStart     = (Transform)EditorGUILayout.ObjectField("始点オブジェクト", _target.interpStartObject, typeof(Transform), true);
+        var   newStartAxis = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpStartTangentAxis);
+        var   newEnd       = (Transform)EditorGUILayout.ObjectField("終点オブジェクト", _target.interpEndObject,   typeof(Transform), true);
+        var   newEndAxis   = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpEndTangentAxis);
+        float newCant      = EditorGUILayout.FloatField("カント角 °",                   _target.paramCantAngle);
+        bool  newEase      = EditorGUILayout.Toggle("緩和曲線",                         _target.paramUseEasement);
+        float newEaseLen   = _target.paramEasementLength;
+        if (newEase)
+            newEaseLen     = EditorGUILayout.FloatField("緩和区間長 m",                 _target.paramEasementLength);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Interpolation Params");
-            _target.interpStartObject  = newStart;
-            _target.interpStartTangent = newStartTan;
-            _target.interpEndObject    = newEnd;
-            _target.interpEndTangent   = newEndTan;
-            _target.arcLengthLUT       = null;
-            _target.paramPointsBuilt   = false;
+            _target.interpStartObject      = newStart;
+            _target.interpStartTangentAxis = newStartAxis;
+            _target.interpEndObject        = newEnd;
+            _target.interpEndTangentAxis   = newEndAxis;
+            _target.paramCantAngle         = newCant;
+            _target.paramUseEasement       = newEase;
+            _target.paramEasementLength    = Mathf.Max(0f, newEaseLen);
+            _target.arcLengthLUT           = null;
+            _target.paramPointsBuilt       = false;
             EditorUtility.SetDirty(_target);
         }
     }
