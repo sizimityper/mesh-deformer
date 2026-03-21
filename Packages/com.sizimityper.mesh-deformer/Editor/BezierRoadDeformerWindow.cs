@@ -21,11 +21,21 @@ public class BezierRoadDeformerWindow : EditorWindow
     private float _prevDesignSpeed, _prevFrictionCoeff;
     private bool  _prevAutoDesignSpeed, _prevAutoFriction, _prevAutoApplyCant, _prevAutoEasement;
 
-    private Transform _prevInterpStart, _prevInterpEnd;
-    private Vector3   _prevInterpStartPos, _prevInterpEndPos;
-    private Vector3   _prevInterpStartTan, _prevInterpEndTan;
+    private Transform   _prevInterpStart, _prevInterpEnd;
+    private Vector3     _prevInterpStartPos, _prevInterpEndPos;
+    private Quaternion  _prevInterpStartRot, _prevInterpEndRot;
+    private TangentAxis _prevInterpStartAxis, _prevInterpEndAxis;
+    private bool        _prevInterpAutoCalcCant;
+    private float       _prevInterpMidCant;
+    private InterpTangentScaleMode _prevInterpTangentScaleMode;
+    private float       _prevInterpTangentScale;
+    private bool        _prevInterpTangentScaleIndividual;
+    private float       _prevInterpStartTangentScale;
+    private float       _prevInterpEndTangentScale;
 
     private float _prevStraightLength;
+    private bool  _prevStraightAutoGrade;
+    private float _prevStraightHeight;
 
     // ============================================================
 
@@ -73,9 +83,24 @@ public class BezierRoadDeformerWindow : EditorWindow
     private void OnEditorUpdate()
     {
         if (_target == null) return;
-        if (!_target.IsPreviewActive()) return;
 
         bool changed = DetectChanges();
+
+        // プレビューOFF時: 変化があればLUTを無効化してシーンを再描画
+        if (!_target.IsPreviewActive())
+        {
+            if (changed)
+            {
+                CacheAll();
+                _target.arcLengthLUT    = null;
+                _target.paramPointsBuilt = false;
+                EditorUtility.SetDirty(_target);
+            }
+            if (!_target.paramPointsBuilt)
+                SceneView.RepaintAll();
+            return;
+        }
+
         if (changed)
         {
             if (_target.curveMode == CurveMode.Curve && _target.paramAutoCalcDesignSpeed)
@@ -142,15 +167,29 @@ public class BezierRoadDeformerWindow : EditorWindow
                     || _target.paramAutoCalcEasement    != _prevAutoEasement;
 
             case CurveMode.Interpolation:
-                return _target.interpStartObject != _prevInterpStart
-                    || _target.interpEndObject   != _prevInterpEnd
+                return _target.interpStartObject        != _prevInterpStart
+                    || _target.interpEndObject          != _prevInterpEnd
+                    || _target.interpStartTangentAxis   != _prevInterpStartAxis
+                    || _target.interpEndTangentAxis     != _prevInterpEndAxis
+                    || _target.paramInterpAutoCalcCant  != _prevInterpAutoCalcCant
                     || (_target.interpStartObject != null && _target.interpStartObject.position != _prevInterpStartPos)
                     || (_target.interpEndObject   != null && _target.interpEndObject.position   != _prevInterpEndPos)
-                    || _target.interpStartTangent != _prevInterpStartTan
-                    || _target.interpEndTangent   != _prevInterpEndTan;
+                    || (_target.interpStartObject != null && _target.interpStartObject.rotation != _prevInterpStartRot)
+                    || (_target.interpEndObject   != null && _target.interpEndObject.rotation   != _prevInterpEndRot)
+                    || _target.paramCantAngle      != _prevParamCant
+                    || _target.paramUseEasement    != _prevUseEasement
+                    || _target.paramEasementLength != _prevParamEaseLen
+                    || (!_target.paramInterpAutoCalcCant && _target.interpMidCantAngle != _prevInterpMidCant)
+                    || _target.interpTangentScaleMode         != _prevInterpTangentScaleMode
+                    || _target.interpTangentScale             != _prevInterpTangentScale
+                    || _target.interpTangentScaleIndividual   != _prevInterpTangentScaleIndividual
+                    || _target.interpStartTangentScale        != _prevInterpStartTangentScale
+                    || _target.interpEndTangentScale          != _prevInterpEndTangentScale;
 
             case CurveMode.Straight:
                 return _target.paramStraightLength     != _prevStraightLength
+                    || _target.paramStraightAutoGrade  != _prevStraightAutoGrade
+                    || _target.paramStraightHeight     != _prevStraightHeight
                     || _target.paramGrade              != _prevParamGrade
                     || _target.paramGradeVerticalCurve != _prevGradeVerticalCurve;
         }
@@ -177,13 +216,24 @@ public class BezierRoadDeformerWindow : EditorWindow
         _prevAutoFriction     = _target.paramAutoCalcFriction;
         _prevAutoApplyCant    = _target.paramAutoApplyCant;
         _prevAutoEasement     = _target.paramAutoCalcEasement;
-        _prevInterpStart      = _target.interpStartObject;
-        _prevInterpEnd        = _target.interpEndObject;
+        _prevInterpStart         = _target.interpStartObject;
+        _prevInterpEnd           = _target.interpEndObject;
+        _prevInterpStartAxis     = _target.interpStartTangentAxis;
+        _prevInterpEndAxis       = _target.interpEndTangentAxis;
+        _prevInterpAutoCalcCant          = _target.paramInterpAutoCalcCant;
+        _prevInterpMidCant               = _target.interpMidCantAngle;
+        _prevInterpTangentScaleMode       = _target.interpTangentScaleMode;
+        _prevInterpTangentScale          = _target.interpTangentScale;
+        _prevInterpTangentScaleIndividual = _target.interpTangentScaleIndividual;
+        _prevInterpStartTangentScale     = _target.interpStartTangentScale;
+        _prevInterpEndTangentScale       = _target.interpEndTangentScale;
         _prevInterpStartPos   = _target.interpStartObject != null ? _target.interpStartObject.position : Vector3.zero;
         _prevInterpEndPos     = _target.interpEndObject   != null ? _target.interpEndObject.position   : Vector3.zero;
-        _prevInterpStartTan   = _target.interpStartTangent;
-        _prevInterpEndTan     = _target.interpEndTangent;
-        _prevStraightLength   = _target.paramStraightLength;
+        _prevInterpStartRot   = _target.interpStartObject != null ? _target.interpStartObject.rotation : Quaternion.identity;
+        _prevInterpEndRot     = _target.interpEndObject   != null ? _target.interpEndObject.rotation   : Quaternion.identity;
+        _prevStraightLength     = _target.paramStraightLength;
+        _prevStraightAutoGrade  = _target.paramStraightAutoGrade;
+        _prevStraightHeight     = _target.paramStraightHeight;
     }
 
     // ============================================================
@@ -312,10 +362,57 @@ public class BezierRoadDeformerWindow : EditorWindow
                     return;
                 }
             }
+            if (!ConfirmIfExcessiveTiles()) return;
             _target.arcLengthLUT = null;
             _target.UpdatePreview();
         }
         EditorUtility.SetDirty(_target);
+    }
+
+    private static readonly int TILE_WARN_THRESHOLD = 500;
+
+    private bool ConfirmIfExcessiveTiles()
+    {
+        int maxTiles = CalcMaxEstimatedTileCount();
+        if (maxTiles <= TILE_WARN_THRESHOLD) return true;
+
+        return EditorUtility.DisplayDialog(
+            "タイル数が多すぎる可能性があります",
+            $"推定タイル数: {maxTiles} 回\n\n" +
+            $"軸線方向「{_target.axisDirection}」に対するメッシュの奥行きが非常に小さいため、\n" +
+            $"繰り返し回数が過大になっています。\n\n" +
+            "軸線方向の設定が正しいか確認してください。\n\nそれでも続けますか？",
+            "続ける",
+            "キャンセル");
+    }
+
+    private int CalcMaxEstimatedTileCount()
+    {
+        if (_target == null) return 0;
+        if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0) return 0;
+        if (_target.arcLengthLUT == null || !_target.paramPointsBuilt)
+            _target.BuildArcLengthLUT();
+        if (_target.totalArcLength <= 0f) return 0;
+
+        int max = 0;
+        foreach (var entry in _target.sourceMeshEntries)
+        {
+            if (entry.mesh == null) continue;
+            var verts = entry.mesh.vertices;
+            float minA = float.MaxValue, maxA = float.MinValue;
+            foreach (var v in verts)
+            {
+                float a = _target.axisDirection == AxisDirection.X ? v.x
+                        : _target.axisDirection == AxisDirection.Y ? v.y
+                        : v.z;
+                if (a < minA) minA = a;
+                if (a > maxA) maxA = a;
+            }
+            float meshLen = Mathf.Max(maxA - minA, 1e-6f);
+            int tiles = Mathf.Max(1, Mathf.CeilToInt(_target.totalArcLength / meshLen));
+            if (tiles > max) max = tiles;
+        }
+        return max;
     }
 
     // ---- Base Object ----------------------------------------
@@ -384,10 +481,25 @@ public class BezierRoadDeformerWindow : EditorWindow
     private void DrawCurveModeUI()
     {
         EditorGUI.BeginChangeCheck();
-        float newR      = EditorGUILayout.FloatField("R (曲率半径) m", _target.paramR);
-        float newAngle  = EditorGUILayout.FloatField("展開角 °",        _target.paramAngle);
-        bool  newRight  = EditorGUILayout.Toggle("右カーブ",            _target.paramTurnRight);
-        float newGrade  = EditorGUILayout.FloatField("縦断勾配 %",       _target.paramGrade);
+        float newR         = EditorGUILayout.FloatField("R (曲率半径) m",  _target.paramR);
+        float newAngle     = EditorGUILayout.FloatField("展開角 °",         _target.paramAngle);
+        bool  newRight     = EditorGUILayout.Toggle("右カーブ",             _target.paramTurnRight);
+        bool  newAutoGrade = EditorGUILayout.Toggle("高さから勾配を自動算出", _target.paramCurveAutoGrade);
+        float newGrade, newCurveHeight;
+        if (newAutoGrade)
+        {
+            newCurveHeight = EditorGUILayout.FloatField("高さ m", _target.paramCurveHeight);
+            float arcLen   = CalcCurveArcLength(Mathf.Max(0.1f, newR), Mathf.Clamp(newAngle, 0f, 720f),
+                                                _target.paramUseEasement, _target.paramEasementLength);
+            newGrade = arcLen > 0f ? newCurveHeight / arcLen * 100f : 0f;
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  縦断勾配 (算出) %", newGrade);
+        }
+        else
+        {
+            newCurveHeight = _target.paramCurveHeight;
+            newGrade       = EditorGUILayout.FloatField("縦断勾配 %", _target.paramGrade);
+        }
         bool  newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）", _target.paramGradeVerticalCurve);
         bool  newEase   = EditorGUILayout.Toggle("緩和曲線",             _target.paramUseEasement);
         if (EditorGUI.EndChangeCheck())
@@ -396,7 +508,9 @@ public class BezierRoadDeformerWindow : EditorWindow
             _target.paramR                  = Mathf.Max(0.1f, newR);
             _target.paramAngle              = Mathf.Clamp(newAngle, 0f, 720f);
             _target.paramTurnRight          = newRight;
-            _target.paramGrade             = newGrade;
+            _target.paramCurveAutoGrade     = newAutoGrade;
+            _target.paramCurveHeight        = newCurveHeight;
+            _target.paramGrade              = newGrade;
             _target.paramGradeVerticalCurve = newVCurve;
             _target.paramUseEasement        = newEase;
             _target.arcLengthLUT            = null;
@@ -489,19 +603,85 @@ public class BezierRoadDeformerWindow : EditorWindow
     private void DrawInterpolationModeUI()
     {
         EditorGUI.BeginChangeCheck();
-        var newStart    = (Transform)EditorGUILayout.ObjectField("始点オブジェクト", _target.interpStartObject, typeof(Transform), true);
-        var newStartTan = EditorGUILayout.Vector3Field("始点接線方向",              _target.interpStartTangent);
-        var newEnd      = (Transform)EditorGUILayout.ObjectField("終点オブジェクト", _target.interpEndObject,   typeof(Transform), true);
-        var newEndTan   = EditorGUILayout.Vector3Field("終点接線方向",              _target.interpEndTangent);
+        EditorGUILayout.HelpBox("始点・終点オブジェクトのRotation（接線軸まわりのロール）がカント角として使われます。", MessageType.None);
+        var  newStart     = (Transform)EditorGUILayout.ObjectField("始点オブジェクト", _target.interpStartObject, typeof(Transform), true);
+        var  newStartAxis = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpStartTangentAxis);
+        var  newEnd       = (Transform)EditorGUILayout.ObjectField("終点オブジェクト", _target.interpEndObject,   typeof(Transform), true);
+        var  newEndAxis   = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpEndTangentAxis);
+
+        if (_target.interpStartObject != null)
+        {
+            float c = _target.GetCantFromObjectRotation(_target.interpStartObject, _target.interpStartTangentAxis);
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  始点カント角 (算出) °", c);
+        }
+        if (_target.interpEndObject != null)
+        {
+            float c = _target.GetCantFromObjectRotation(_target.interpEndObject, _target.interpEndTangentAxis);
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  終点カント角 (算出) °", c);
+        }
+
+        // --- カント自動算出（曲率ベース）---
+        bool  newAutoCalcCant = EditorGUILayout.Toggle("自動モード", _target.paramInterpAutoCalcCant);
+        float newMidCant = _target.interpMidCantAngle;
+        if (newAutoCalcCant)
+        {
+            using (new EditorGUI.DisabledGroupScope(true))
+            {
+                EditorGUILayout.FloatField("  R (算出) m",          _target.interpComputedR);
+                EditorGUILayout.FloatField("  設計速度 (算出) km/h", _target.interpComputedDesignSpeed);
+                EditorGUILayout.FloatField("  摩擦係数 (算出)",      _target.interpComputedFriction);
+                EditorGUILayout.FloatField("  中間カント角 (算出) °", _target.interpMidCantComputed);
+            }
+        }
+        else
+        {
+            newMidCant = EditorGUILayout.FloatField("中間カント角 (t=0.5) °", _target.interpMidCantAngle);
+        }
+
+        // --- タンジェントスケール ---
+        EditorGUILayout.Space(4);
+        var   newScaleMode     = _target.interpTangentScaleMode;
+        bool  newIndividual    = _target.interpTangentScaleIndividual;
+        float newTanScale      = _target.interpTangentScale;
+        float newTanScaleStart = _target.interpStartTangentScale;
+        float newTanScaleEnd   = _target.interpEndTangentScale;
+        if (newAutoCalcCant)
+        {
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("タンジェントスケール (算出)", _target.interpComputedTangentScale);
+        }
+        else
+        {
+            newIndividual = EditorGUILayout.Toggle("タンジェントスケール個別調整", _target.interpTangentScaleIndividual);
+            if (newIndividual)
+            {
+                newTanScaleStart = EditorGUILayout.FloatField("  始点スケール", _target.interpStartTangentScale);
+                newTanScaleEnd   = EditorGUILayout.FloatField("  終点スケール", _target.interpEndTangentScale);
+            }
+            else
+            {
+                newTanScale = EditorGUILayout.FloatField("タンジェントスケール", _target.interpTangentScale);
+            }
+        }
+
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Interpolation Params");
-            _target.interpStartObject  = newStart;
-            _target.interpStartTangent = newStartTan;
-            _target.interpEndObject    = newEnd;
-            _target.interpEndTangent   = newEndTan;
-            _target.arcLengthLUT       = null;
-            _target.paramPointsBuilt   = false;
+            _target.interpStartObject             = newStart;
+            _target.interpStartTangentAxis        = newStartAxis;
+            _target.interpEndObject               = newEnd;
+            _target.interpEndTangentAxis          = newEndAxis;
+            _target.paramInterpAutoCalcCant       = newAutoCalcCant;
+            _target.interpMidCantAngle            = newMidCant;
+            _target.interpTangentScaleMode        = newScaleMode;
+            _target.interpTangentScaleIndividual  = newIndividual;
+            _target.interpTangentScale            = Mathf.Max(0f, newTanScale);
+            _target.interpStartTangentScale       = Mathf.Max(0f, newTanScaleStart);
+            _target.interpEndTangentScale         = Mathf.Max(0f, newTanScaleEnd);
+            _target.arcLengthLUT                  = null;
+            _target.paramPointsBuilt              = false;
             EditorUtility.SetDirty(_target);
         }
     }
@@ -509,19 +689,44 @@ public class BezierRoadDeformerWindow : EditorWindow
     private void DrawStraightModeUI()
     {
         EditorGUI.BeginChangeCheck();
-        float newLen    = EditorGUILayout.FloatField("長さ m",           _target.paramStraightLength);
-        float newGrade  = EditorGUILayout.FloatField("縦断勾配 %",       _target.paramGrade);
-        bool  newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）", _target.paramGradeVerticalCurve);
+        float newLen       = EditorGUILayout.FloatField("長さ m",               _target.paramStraightLength);
+        bool  newAutoGrade = EditorGUILayout.Toggle("高さから勾配を自動算出",    _target.paramStraightAutoGrade);
+        float newGrade, newHeight;
+        if (newAutoGrade)
+        {
+            newHeight = EditorGUILayout.FloatField("高さ m", _target.paramStraightHeight);
+            float len = Mathf.Max(0.1f, newLen);
+            newGrade  = newHeight / len * 100f;
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  縦断勾配 (算出) %", newGrade);
+        }
+        else
+        {
+            newHeight = _target.paramStraightHeight;
+            newGrade  = EditorGUILayout.FloatField("縦断勾配 %", _target.paramGrade);
+        }
+        bool newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）", _target.paramGradeVerticalCurve);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Straight Params");
             _target.paramStraightLength     = Mathf.Max(0.1f, newLen);
+            _target.paramStraightAutoGrade  = newAutoGrade;
+            _target.paramStraightHeight     = newHeight;
             _target.paramGrade              = newGrade;
             _target.paramGradeVerticalCurve = newVCurve;
             _target.arcLengthLUT            = null;
             _target.paramPointsBuilt        = false;
             EditorUtility.SetDirty(_target);
         }
+    }
+
+    private static float CalcCurveArcLength(float R, float angleDeg, bool useEasement, float easementLength)
+    {
+        float totalAngleRad = angleDeg * Mathf.Deg2Rad;
+        float easLen        = useEasement ? Mathf.Max(easementLength, 0f) : 0f;
+        float easAngle      = easLen > 0f ? easLen / (2f * R) : 0f;
+        float arcAngleRad   = Mathf.Max(0f, totalAngleRad - 2f * easAngle);
+        return 2f * easLen + R * arcAngleRad;
     }
 
     // ---- Deform Mode ----------------------------------------
@@ -616,6 +821,8 @@ public class BezierRoadDeformerWindow : EditorWindow
                 return;
             }
         }
+
+        if (!ConfirmIfExcessiveTiles()) return;
 
         Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake");
 
