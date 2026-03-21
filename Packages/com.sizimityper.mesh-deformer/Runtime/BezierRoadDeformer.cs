@@ -70,8 +70,12 @@ namespace SizimityperMeshDeformer
         // --- Interpolation Mode ---
         public Transform   interpStartObject;
         public Transform   interpEndObject;
-        public TangentAxis interpStartTangentAxis = TangentAxis.PosZ;
-        public TangentAxis interpEndTangentAxis   = TangentAxis.PosZ;
+        public TangentAxis interpStartTangentAxis    = TangentAxis.PosZ;
+        public TangentAxis interpEndTangentAxis      = TangentAxis.PosZ;
+        public bool  paramInterpAutoCalcCant  = false;
+        public float interpMidCantAngle      = 0f;  // 中間点(t=0.5)のカント角(°)・手入力
+        [HideInInspector] public float interpMidCantComputed = 0f; // 自動算出時の算出値(表示用)
+        // Reuses paramDesignSpeed, paramAutoCalcFriction, paramFrictionCoeff for auto-cant
         [HideInInspector] public Vector3 interpStartTangent = Vector3.forward; // legacy
         [HideInInspector] public Vector3 interpEndTangent   = Vector3.forward; // legacy
 
@@ -100,6 +104,7 @@ namespace SizimityperMeshDeformer
         [HideInInspector] public float         totalArcLength;
         [HideInInspector] public List<Vector3> paramPoints;
         [HideInInspector] public List<Vector3> paramTangents;
+        [HideInInspector] public float[]       interpCantLUT;   // per-sample cant (Interpolation auto-cant)
         [HideInInspector] public bool          paramPointsBuilt = false;
 
         // ============================================================
@@ -353,13 +358,22 @@ namespace SizimityperMeshDeformer
 
             if (curveMode == CurveMode.Interpolation)
             {
-                float total  = Mathf.Max(totalArcLength, 1e-6f);
-                float easLen = paramUseEasement ? Mathf.Min(Mathf.Max(paramEasementLength, 0f), total * 0.5f) : 0f;
-                if (!paramUseEasement || easLen <= 0f) return paramCantAngle;
-                float midLen = total - 2f * easLen;
-                if (s < easLen)          return Mathf.Lerp(0f, paramCantAngle, s / easLen);
-                if (s < easLen + midLen) return paramCantAngle;
-                return Mathf.Lerp(paramCantAngle, 0f, Mathf.Clamp01((s - easLen - midLen) / easLen));
+                // LUT is always built in GenerateInterpolationCurve
+                if (interpCantLUT != null && interpCantLUT.Length > 1
+                    && arcLengthLUT != null && arcLengthLUT.Length == interpCantLUT.Length)
+                {
+                    s = Mathf.Clamp(s, 0f, totalArcLength);
+                    int lo = 0, hi = arcLengthLUT.Length - 1;
+                    while (lo < hi - 1)
+                    {
+                        int mid = (lo + hi) / 2;
+                        if (arcLengthLUT[mid] <= s) lo = mid; else hi = mid;
+                    }
+                    float segLen = arcLengthLUT[hi] - arcLengthLUT[lo];
+                    float alpha  = segLen > 1e-6f ? (s - arcLengthLUT[lo]) / segLen : 0f;
+                    return Mathf.Lerp(interpCantLUT[lo], interpCantLUT[hi], alpha);
+                }
+                return 0f;
             }
 
             // CurveMode.Curve
@@ -393,6 +407,19 @@ namespace SizimityperMeshDeformer
             }
         }
 
+        /// <summary>
+        /// オブジェクトのロール（接線軸まわりの傾き）をカント角(°)として返す。
+        /// 接線軸に垂直な平面上で、ワールド上方向とオブジェクト上方向の符号付き角度を計算する。
+        /// </summary>
+        public float GetCantFromObjectRotation(Transform t, TangentAxis tangentAxis)
+        {
+            Vector3 tangent     = GetTangentDirection(t, tangentAxis);
+            Vector3 worldUpPerp = Vector3.ProjectOnPlane(Vector3.up, tangent);
+            Vector3 objUpPerp   = Vector3.ProjectOnPlane(t.up, tangent);
+            if (worldUpPerp.sqrMagnitude < 1e-6f || objUpPerp.sqrMagnitude < 1e-6f) return 0f;
+            return Vector3.SignedAngle(worldUpPerp.normalized, objUpPerp.normalized, tangent);
+        }
+
         private void GenerateInterpolationCurve(int resolution = 200)
         {
             if (interpStartObject == null || interpEndObject == null) return;
@@ -407,22 +434,60 @@ namespace SizimityperMeshDeformer
             paramPoints   = new List<Vector3>(steps + 1);
             paramTangents = new List<Vector3>(steps + 1);
 
+            // 始点・終点のカント角は常にオブジェクトのRotationから取得
+            float cantStart = GetCantFromObjectRotation(interpStartObject, interpStartTangentAxis);
+            float cantEnd   = GetCantFromObjectRotation(interpEndObject,   interpEndTangentAxis);
+            interpCantLUT   = new float[steps + 1];
+
+            // 中間(t=0.5)のカント角: 自動算出 or 手入力
+            float midCant;
+            if (paramInterpAutoCalcCant)
+            {
+                // t=0.5の曲率からカント角を算出
+                const float half = 0.5f;
+                Vector3 mTan  = (6f*half*half - 6f*half)*p0 + (3f*half*half - 4f*half + 1f)*t0
+                              + (-6f*half*half + 6f*half)*p1 + (3f*half*half - 2f*half)*t1;
+                Vector3 mTan2 = (12f*half - 6f)*p0 + (6f*half - 4f)*t0
+                              + (-12f*half + 6f)*p1 + (6f*half - 2f)*t1;
+                Vector3 cross   = Vector3.Cross(mTan, mTan2);
+                float   dMag    = mTan.magnitude;
+                float   kappa   = dMag > 1e-6f ? cross.magnitude / (dMag * dMag * dMag) : 0f;
+                float   R       = kappa > 1e-6f ? 1f / kappa : float.MaxValue;
+                float   fCoeff  = paramAutoCalcFriction ? CalcFrictionFromSpeed(paramDesignSpeed) : paramFrictionCoeff;
+                float   supelev = Mathf.Clamp((paramDesignSpeed * paramDesignSpeed) / (127f * R) - fCoeff, 0f, 0.12f);
+                float   cantSgn = cross.y < 0f ? 1f : -1f;
+                midCant = cantSgn * Mathf.Atan(supelev) * Mathf.Rad2Deg;
+                interpMidCantComputed = midCant;
+            }
+            else
+            {
+                midCant = interpMidCantAngle;
+                interpMidCantComputed = 0f;
+            }
+
+            // 始点・中間・終点を通る2次補間でLUTを構築
+            // 制御点 B = (4*mid - start - end) / 2 でt=0.5が正確にmidを通る
+            float bezB = (4f * midCant - cantStart - cantEnd) / 2f;
             for (int i = 0; i <= steps; i++)
             {
-                float u  = (float)i / steps;
-                float u2 = u * u, u3 = u2 * u;
+                float param  = (float)i / steps;
+                float param2 = param * param;
+                float param3 = param2 * param;
 
-                Vector3 wPos = (2f * u3 - 3f * u2 + 1f) * p0 + (u3 - 2f * u2 + u) * t0
-                             + (-2f * u3 + 3f * u2) * p1    + (u3 - u2) * t1;
-                Vector3 wTan = (6f * u2 - 6f * u) * p0 + (3f * u2 - 4f * u + 1f) * t0
-                             + (-6f * u2 + 6f * u) * p1 + (3f * u2 - 2f * u) * t1;
+                Vector3 wPos = (2f * param3 - 3f * param2 + 1f) * p0 + (param3 - 2f * param2 + param) * t0
+                             + (-2f * param3 + 3f * param2) * p1    + (param3 - param2) * t1;
+                Vector3 wTan = (6f * param2 - 6f * param) * p0 + (3f * param2 - 4f * param + 1f) * t0
+                             + (-6f * param2 + 6f * param) * p1 + (3f * param2 - 2f * param) * t1;
 
                 paramPoints.Add(transform.InverseTransformPoint(wPos));
-                Vector3 localTan = wTan.sqrMagnitude > 1e-8f
+                paramTangents.Add(wTan.sqrMagnitude > 1e-8f
                     ? transform.InverseTransformDirection(wTan.normalized)
-                    : Vector3.forward;
-                paramTangents.Add(localTan);
+                    : Vector3.forward);
+
+                float q = 1f - param;
+                interpCantLUT[i] = cantStart * q * q + 2f * bezB * param * q + cantEnd * param * param;
             }
+
             paramPointsBuilt = true;
         }
 

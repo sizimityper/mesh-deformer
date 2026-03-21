@@ -24,6 +24,8 @@ public class BezierRoadDeformerEditor : Editor
     private Vector3     _prevInterpStartPos, _prevInterpEndPos;
     private Quaternion  _prevInterpStartRot, _prevInterpEndRot;
     private TangentAxis _prevInterpStartAxis, _prevInterpEndAxis;
+    private bool        _prevInterpAutoCalcCant;
+    private float       _prevInterpMidCant;
 
     // Straight mode
     private float _prevStraightLength;
@@ -137,17 +139,23 @@ public class BezierRoadDeformerEditor : Editor
                     || _target.paramAutoCalcEasement    != _prevAutoEasement;
 
             case CurveMode.Interpolation:
-                return _target.interpStartObject      != _prevInterpStart
-                    || _target.interpEndObject        != _prevInterpEnd
-                    || _target.interpStartTangentAxis != _prevInterpStartAxis
-                    || _target.interpEndTangentAxis   != _prevInterpEndAxis
+                return _target.interpStartObject        != _prevInterpStart
+                    || _target.interpEndObject          != _prevInterpEnd
+                    || _target.interpStartTangentAxis   != _prevInterpStartAxis
+                    || _target.interpEndTangentAxis     != _prevInterpEndAxis
+                    || _target.paramInterpAutoCalcCant  != _prevInterpAutoCalcCant
                     || (_target.interpStartObject != null && _target.interpStartObject.position != _prevInterpStartPos)
                     || (_target.interpEndObject   != null && _target.interpEndObject.position   != _prevInterpEndPos)
                     || (_target.interpStartObject != null && _target.interpStartObject.rotation != _prevInterpStartRot)
                     || (_target.interpEndObject   != null && _target.interpEndObject.rotation   != _prevInterpEndRot)
                     || _target.paramCantAngle      != _prevParamCant
                     || _target.paramUseEasement    != _prevUseEasement
-                    || _target.paramEasementLength != _prevParamEaseLen;
+                    || _target.paramEasementLength != _prevParamEaseLen
+                    || (!_target.paramInterpAutoCalcCant && _target.interpMidCantAngle != _prevInterpMidCant)
+                    || (_target.paramInterpAutoCalcCant && (
+                           _target.paramDesignSpeed      != _prevDesignSpeed
+                        || _target.paramAutoCalcFriction != _prevAutoFriction
+                        || _target.paramFrictionCoeff    != _prevFrictionCoeff));
 
             case CurveMode.Straight:
                 return _target.paramStraightLength     != _prevStraightLength
@@ -181,14 +189,16 @@ public class BezierRoadDeformerEditor : Editor
         _prevAutoApplyCant    = _target.paramAutoApplyCant;
         _prevAutoEasement     = _target.paramAutoCalcEasement;
 
-        _prevInterpStart      = _target.interpStartObject;
-        _prevInterpEnd        = _target.interpEndObject;
-        _prevInterpStartAxis  = _target.interpStartTangentAxis;
-        _prevInterpEndAxis    = _target.interpEndTangentAxis;
-        _prevInterpStartPos   = _target.interpStartObject != null ? _target.interpStartObject.position : Vector3.zero;
-        _prevInterpEndPos     = _target.interpEndObject   != null ? _target.interpEndObject.position   : Vector3.zero;
-        _prevInterpStartRot   = _target.interpStartObject != null ? _target.interpStartObject.rotation : Quaternion.identity;
-        _prevInterpEndRot     = _target.interpEndObject   != null ? _target.interpEndObject.rotation   : Quaternion.identity;
+        _prevInterpStart         = _target.interpStartObject;
+        _prevInterpEnd           = _target.interpEndObject;
+        _prevInterpStartAxis     = _target.interpStartTangentAxis;
+        _prevInterpEndAxis       = _target.interpEndTangentAxis;
+        _prevInterpAutoCalcCant  = _target.paramInterpAutoCalcCant;
+        _prevInterpMidCant       = _target.interpMidCantAngle;
+        _prevInterpStartPos      = _target.interpStartObject != null ? _target.interpStartObject.position : Vector3.zero;
+        _prevInterpEndPos        = _target.interpEndObject   != null ? _target.interpEndObject.position   : Vector3.zero;
+        _prevInterpStartRot      = _target.interpStartObject != null ? _target.interpStartObject.rotation : Quaternion.identity;
+        _prevInterpEndRot        = _target.interpEndObject   != null ? _target.interpEndObject.rotation   : Quaternion.identity;
 
         _prevStraightLength     = _target.paramStraightLength;
         _prevStraightAutoGrade  = _target.paramStraightAutoGrade;
@@ -443,28 +453,64 @@ public class BezierRoadDeformerEditor : Editor
     private void DrawInterpolationModeUI()
     {
         EditorGUI.BeginChangeCheck();
-        EditorGUILayout.HelpBox("始点・終点オブジェクトのRotationが接線方向として使われます。", MessageType.None);
-        var   newStart      = (Transform)EditorGUILayout.ObjectField("始点オブジェクト", _target.interpStartObject, typeof(Transform), true);
-        var   newStartAxis  = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpStartTangentAxis);
-        var   newEnd        = (Transform)EditorGUILayout.ObjectField("終点オブジェクト", _target.interpEndObject,   typeof(Transform), true);
-        var   newEndAxis    = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpEndTangentAxis);
-        float newCant       = EditorGUILayout.FloatField("カント角 °",                   _target.paramCantAngle);
-        bool  newEase       = EditorGUILayout.Toggle("緩和曲線",                         _target.paramUseEasement);
-        float newEaseLen    = _target.paramEasementLength;
-        if (newEase)
-            newEaseLen      = EditorGUILayout.FloatField("緩和区間長 m",                 _target.paramEasementLength);
+        EditorGUILayout.HelpBox("始点・終点オブジェクトのRotation（接線軸まわりのロール）がカント角として使われます。", MessageType.None);
+        var  newStart     = (Transform)EditorGUILayout.ObjectField("始点オブジェクト", _target.interpStartObject, typeof(Transform), true);
+        var  newStartAxis = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpStartTangentAxis);
+        var  newEnd       = (Transform)EditorGUILayout.ObjectField("終点オブジェクト", _target.interpEndObject,   typeof(Transform), true);
+        var  newEndAxis   = (TangentAxis)EditorGUILayout.EnumPopup("  接線軸",         _target.interpEndTangentAxis);
+
+        // 現在のカント角をリアルタイム表示
+        if (_target.interpStartObject != null)
+        {
+            float c = _target.GetCantFromObjectRotation(_target.interpStartObject, _target.interpStartTangentAxis);
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  始点カント角 (算出) °", c);
+        }
+        if (_target.interpEndObject != null)
+        {
+            float c = _target.GetCantFromObjectRotation(_target.interpEndObject, _target.interpEndTangentAxis);
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  終点カント角 (算出) °", c);
+        }
+
+        // --- カント自動算出（曲率ベース）---
+        bool  newAutoCalcCant = EditorGUILayout.Toggle("カント角を曲率から自動算出", _target.paramInterpAutoCalcCant);
+        float newSpeed        = _target.paramDesignSpeed;
+        bool  newAutoFric     = _target.paramAutoCalcFriction;
+        float newFric         = _target.paramFrictionCoeff;
+        float newMidCant = _target.interpMidCantAngle;
+        if (newAutoCalcCant)
+        {
+            newAutoFric = EditorGUILayout.Toggle("摩擦係数を自動取得",  _target.paramAutoCalcFriction);
+            newFric     = newAutoFric
+                ? _target.CalcFrictionFromSpeed(_target.paramDesignSpeed)
+                : EditorGUILayout.FloatField("横すべり摩擦係数",       _target.paramFrictionCoeff);
+            newSpeed    = EditorGUILayout.FloatField("設計速度 km/h",   _target.paramDesignSpeed);
+            if (newAutoFric)
+                using (new EditorGUI.DisabledGroupScope(true))
+                    EditorGUILayout.FloatField("  摩擦係数 (算出)", _target.CalcFrictionFromSpeed(newSpeed));
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  中間カント角 (算出) °", _target.interpMidCantComputed);
+        }
+        else
+        {
+            newMidCant = EditorGUILayout.FloatField("中間カント角 (t=0.5) °", _target.interpMidCantAngle);
+        }
+
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Interpolation Params");
-            _target.interpStartObject      = newStart;
-            _target.interpStartTangentAxis = newStartAxis;
-            _target.interpEndObject        = newEnd;
-            _target.interpEndTangentAxis   = newEndAxis;
-            _target.paramCantAngle         = newCant;
-            _target.paramUseEasement       = newEase;
-            _target.paramEasementLength    = Mathf.Max(0f, newEaseLen);
-            _target.arcLengthLUT           = null;
-            _target.paramPointsBuilt       = false;
+            _target.interpStartObject       = newStart;
+            _target.interpStartTangentAxis  = newStartAxis;
+            _target.interpEndObject         = newEnd;
+            _target.interpEndTangentAxis    = newEndAxis;
+            _target.paramInterpAutoCalcCant = newAutoCalcCant;
+            _target.paramDesignSpeed        = Mathf.Max(0f, newSpeed);
+            _target.paramAutoCalcFriction   = newAutoFric;
+            if (!newAutoFric) _target.paramFrictionCoeff = newFric;
+            _target.interpMidCantAngle      = newMidCant;
+            _target.arcLengthLUT            = null;
+            _target.paramPointsBuilt        = false;
             EditorUtility.SetDirty(_target);
         }
     }
@@ -766,8 +812,9 @@ public class BezierRoadDeformerEditor : Editor
     [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected | GizmoType.InSelectionHierarchy)]
     static void DrawCurveGizmo(BezierRoadDeformer target, GizmoType gizmoType)
     {
-        if (!target.paramPointsBuilt || target.paramPoints == null)
-            target.BuildArcLengthLUT();
+        bool needRebuild = !target.paramPointsBuilt || target.paramPoints == null
+            || (target.curveMode == CurveMode.Interpolation && target.interpCantLUT == null);
+        if (needRebuild) target.BuildArcLengthLUT();
         if (target.paramPoints == null || target.paramPoints.Count < 2) return;
 
         var   pts   = target.paramPoints;
