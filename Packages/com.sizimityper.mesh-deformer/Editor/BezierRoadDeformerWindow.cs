@@ -27,6 +27,11 @@ public class BezierRoadDeformerWindow : EditorWindow
     private TangentAxis _prevInterpStartAxis, _prevInterpEndAxis;
     private bool        _prevInterpAutoCalcCant;
     private float       _prevInterpMidCant;
+    private InterpTangentScaleMode _prevInterpTangentScaleMode;
+    private float       _prevInterpTangentScale;
+    private bool        _prevInterpTangentScaleIndividual;
+    private float       _prevInterpStartTangentScale;
+    private float       _prevInterpEndTangentScale;
 
     private float _prevStraightLength;
     private bool  _prevStraightAutoGrade;
@@ -175,10 +180,11 @@ public class BezierRoadDeformerWindow : EditorWindow
                     || _target.paramUseEasement    != _prevUseEasement
                     || _target.paramEasementLength != _prevParamEaseLen
                     || (!_target.paramInterpAutoCalcCant && _target.interpMidCantAngle != _prevInterpMidCant)
-                    || (_target.paramInterpAutoCalcCant && (
-                           _target.paramDesignSpeed      != _prevDesignSpeed
-                        || _target.paramAutoCalcFriction != _prevAutoFriction
-                        || _target.paramFrictionCoeff    != _prevFrictionCoeff));
+                    || _target.interpTangentScaleMode         != _prevInterpTangentScaleMode
+                    || _target.interpTangentScale             != _prevInterpTangentScale
+                    || _target.interpTangentScaleIndividual   != _prevInterpTangentScaleIndividual
+                    || _target.interpStartTangentScale        != _prevInterpStartTangentScale
+                    || _target.interpEndTangentScale          != _prevInterpEndTangentScale;
 
             case CurveMode.Straight:
                 return _target.paramStraightLength     != _prevStraightLength
@@ -214,8 +220,13 @@ public class BezierRoadDeformerWindow : EditorWindow
         _prevInterpEnd           = _target.interpEndObject;
         _prevInterpStartAxis     = _target.interpStartTangentAxis;
         _prevInterpEndAxis       = _target.interpEndTangentAxis;
-        _prevInterpAutoCalcCant  = _target.paramInterpAutoCalcCant;
-        _prevInterpMidCant       = _target.interpMidCantAngle;
+        _prevInterpAutoCalcCant          = _target.paramInterpAutoCalcCant;
+        _prevInterpMidCant               = _target.interpMidCantAngle;
+        _prevInterpTangentScaleMode       = _target.interpTangentScaleMode;
+        _prevInterpTangentScale          = _target.interpTangentScale;
+        _prevInterpTangentScaleIndividual = _target.interpTangentScaleIndividual;
+        _prevInterpStartTangentScale     = _target.interpStartTangentScale;
+        _prevInterpEndTangentScale       = _target.interpEndTangentScale;
         _prevInterpStartPos   = _target.interpStartObject != null ? _target.interpStartObject.position : Vector3.zero;
         _prevInterpEndPos     = _target.interpEndObject   != null ? _target.interpEndObject.position   : Vector3.zero;
         _prevInterpStartRot   = _target.interpStartObject != null ? _target.interpStartObject.rotation : Quaternion.identity;
@@ -612,43 +623,65 @@ public class BezierRoadDeformerWindow : EditorWindow
         }
 
         // --- カント自動算出（曲率ベース）---
-        bool  newAutoCalcCant = EditorGUILayout.Toggle("カント角を曲率から自動算出", _target.paramInterpAutoCalcCant);
-        float newSpeed        = _target.paramDesignSpeed;
-        bool  newAutoFric     = _target.paramAutoCalcFriction;
-        float newFric         = _target.paramFrictionCoeff;
+        bool  newAutoCalcCant = EditorGUILayout.Toggle("自動モード", _target.paramInterpAutoCalcCant);
         float newMidCant = _target.interpMidCantAngle;
         if (newAutoCalcCant)
         {
-            newAutoFric = EditorGUILayout.Toggle("摩擦係数を自動取得",  _target.paramAutoCalcFriction);
-            newFric     = newAutoFric
-                ? _target.CalcFrictionFromSpeed(_target.paramDesignSpeed)
-                : EditorGUILayout.FloatField("横すべり摩擦係数",       _target.paramFrictionCoeff);
-            newSpeed    = EditorGUILayout.FloatField("設計速度 km/h",   _target.paramDesignSpeed);
-            if (newAutoFric)
-                using (new EditorGUI.DisabledGroupScope(true))
-                    EditorGUILayout.FloatField("  摩擦係数 (算出)", _target.CalcFrictionFromSpeed(newSpeed));
             using (new EditorGUI.DisabledGroupScope(true))
+            {
+                EditorGUILayout.FloatField("  R (算出) m",          _target.interpComputedR);
+                EditorGUILayout.FloatField("  設計速度 (算出) km/h", _target.interpComputedDesignSpeed);
+                EditorGUILayout.FloatField("  摩擦係数 (算出)",      _target.interpComputedFriction);
                 EditorGUILayout.FloatField("  中間カント角 (算出) °", _target.interpMidCantComputed);
+            }
         }
         else
         {
             newMidCant = EditorGUILayout.FloatField("中間カント角 (t=0.5) °", _target.interpMidCantAngle);
         }
 
+        // --- タンジェントスケール ---
+        EditorGUILayout.Space(4);
+        var   newScaleMode     = _target.interpTangentScaleMode;
+        bool  newIndividual    = _target.interpTangentScaleIndividual;
+        float newTanScale      = _target.interpTangentScale;
+        float newTanScaleStart = _target.interpStartTangentScale;
+        float newTanScaleEnd   = _target.interpEndTangentScale;
+        if (newAutoCalcCant)
+        {
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("タンジェントスケール (算出)", _target.interpComputedTangentScale);
+        }
+        else
+        {
+            newIndividual = EditorGUILayout.Toggle("タンジェントスケール個別調整", _target.interpTangentScaleIndividual);
+            if (newIndividual)
+            {
+                newTanScaleStart = EditorGUILayout.FloatField("  始点スケール", _target.interpStartTangentScale);
+                newTanScaleEnd   = EditorGUILayout.FloatField("  終点スケール", _target.interpEndTangentScale);
+            }
+            else
+            {
+                newTanScale = EditorGUILayout.FloatField("タンジェントスケール", _target.interpTangentScale);
+            }
+        }
+
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Interpolation Params");
-            _target.interpStartObject       = newStart;
-            _target.interpStartTangentAxis  = newStartAxis;
-            _target.interpEndObject         = newEnd;
-            _target.interpEndTangentAxis    = newEndAxis;
-            _target.paramInterpAutoCalcCant = newAutoCalcCant;
-            _target.paramDesignSpeed        = Mathf.Max(0f, newSpeed);
-            _target.paramAutoCalcFriction   = newAutoFric;
-            if (!newAutoFric) _target.paramFrictionCoeff = newFric;
-            _target.interpMidCantAngle      = newMidCant;
-            _target.arcLengthLUT            = null;
-            _target.paramPointsBuilt        = false;
+            _target.interpStartObject             = newStart;
+            _target.interpStartTangentAxis        = newStartAxis;
+            _target.interpEndObject               = newEnd;
+            _target.interpEndTangentAxis          = newEndAxis;
+            _target.paramInterpAutoCalcCant       = newAutoCalcCant;
+            _target.interpMidCantAngle            = newMidCant;
+            _target.interpTangentScaleMode        = newScaleMode;
+            _target.interpTangentScaleIndividual  = newIndividual;
+            _target.interpTangentScale            = Mathf.Max(0f, newTanScale);
+            _target.interpStartTangentScale       = Mathf.Max(0f, newTanScaleStart);
+            _target.interpEndTangentScale         = Mathf.Max(0f, newTanScaleEnd);
+            _target.arcLengthLUT                  = null;
+            _target.paramPointsBuilt              = false;
             EditorUtility.SetDirty(_target);
         }
     }

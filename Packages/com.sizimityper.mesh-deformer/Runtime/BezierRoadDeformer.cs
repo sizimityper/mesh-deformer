@@ -8,6 +8,7 @@ namespace SizimityperMeshDeformer
     public enum CurveMode    { Curve, Interpolation, Straight }
     public enum DeformMode   { Stretch, Cut }
     public enum TangentAxis  { PosZ, NegZ, PosX, NegX, PosY, NegY }
+    public enum InterpTangentScaleMode { Manual, AngleBased, RadiusBased }
 
     [Serializable]
     public class SourceMeshEntry
@@ -72,10 +73,18 @@ namespace SizimityperMeshDeformer
         public Transform   interpEndObject;
         public TangentAxis interpStartTangentAxis    = TangentAxis.PosZ;
         public TangentAxis interpEndTangentAxis      = TangentAxis.PosZ;
-        public bool  paramInterpAutoCalcCant  = false;
-        public float interpMidCantAngle      = 0f;  // 中間点(t=0.5)のカント角(°)・手入力
-        [HideInInspector] public float interpMidCantComputed = 0f; // 自動算出時の算出値(表示用)
-        // Reuses paramDesignSpeed, paramAutoCalcFriction, paramFrictionCoeff for auto-cant
+        public bool  paramInterpAutoCalcCant    = false;
+        public float interpMidCantAngle        = 0f;   // 中間点(t=0.5)のカント角(°)・手入力
+        public InterpTangentScaleMode interpTangentScaleMode = InterpTangentScaleMode.Manual;
+        public float interpTangentScale        = 1f;   // タンジェントスケール（共通・手動）
+        public bool  interpTangentScaleIndividual = false;
+        public float interpStartTangentScale   = 1f;   // タンジェントスケール（始点個別・手動）
+        public float interpEndTangentScale     = 1f;   // タンジェントスケール（終点個別・手動）
+        [HideInInspector] public float interpComputedTangentScale = 1f; // 自動算出時の算出値(表示用)
+        [HideInInspector] public float interpMidCantComputed     = 0f;  // 表示用
+        [HideInInspector] public float interpComputedR           = 0f;  // 表示用
+        [HideInInspector] public float interpComputedDesignSpeed = 0f;  // 表示用
+        [HideInInspector] public float interpComputedFriction    = 0f;  // 表示用
         [HideInInspector] public Vector3 interpStartTangent = Vector3.forward; // legacy
         [HideInInspector] public Vector3 interpEndTangent   = Vector3.forward; // legacy
 
@@ -427,8 +436,49 @@ namespace SizimityperMeshDeformer
             Vector3 p0        = interpStartObject.position;
             Vector3 p1        = interpEndObject.position;
             float   handleLen = Vector3.Distance(p0, p1);
-            Vector3 t0        = GetTangentDirection(interpStartObject, interpStartTangentAxis) * handleLen;
-            Vector3 t1        = GetTangentDirection(interpEndObject,   interpEndTangentAxis)   * handleLen;
+            Vector3 dir0      = GetTangentDirection(interpStartObject, interpStartTangentAxis);
+            Vector3 dir1      = GetTangentDirection(interpEndObject,   interpEndTangentAxis);
+
+            // 自動カントモード時はタンジェントスケールもAngleBasedに固定
+            var   effectiveScaleMode = paramInterpAutoCalcCant ? InterpTangentScaleMode.AngleBased : interpTangentScaleMode;
+            float autoScale = 1f;
+            switch (effectiveScaleMode)
+            {
+                case InterpTangentScaleMode.AngleBased:
+                {
+                    // scale = 1 + sin(θ/2)³  → [1.0, 2.0] に自然に収まる
+                    float theta   = Vector3.Angle(dir0, dir1) * Mathf.Deg2Rad;
+                    float sinHalf = Mathf.Sin(theta / 2f);
+                    autoScale = 1f + sinHalf * sinHalf * sinHalf;
+                    break;
+                }
+                case InterpTangentScaleMode.RadiusBased:
+                {
+                    // scale=1でR算出→スケールをR/handleLenに設定
+                    Vector3 rt0   = dir0 * handleLen;
+                    Vector3 rt1   = dir1 * handleLen;
+                    const float h = 0.5f;
+                    Vector3 rTan  = (6f*h*h-6f*h)*p0 + (3f*h*h-4f*h+1f)*rt0
+                                  + (-6f*h*h+6f*h)*p1 + (3f*h*h-2f*h)*rt1;
+                    Vector3 rTan2 = (12f*h-6f)*p0 + (6f*h-4f)*rt0
+                                  + (-12f*h+6f)*p1 + (6f*h-2f)*rt1;
+                    Vector3 cross = Vector3.Cross(rTan, rTan2);
+                    float   dMag  = rTan.magnitude;
+                    float   kappa = dMag > 1e-6f ? cross.magnitude / (dMag * dMag * dMag) : 0f;
+                    float   R     = kappa > 1e-6f ? 1f / kappa : handleLen;
+                    autoScale = Mathf.Clamp(R / Mathf.Max(handleLen, 0.01f), 0.1f, 5f);
+                    break;
+                }
+            }
+            if (effectiveScaleMode != InterpTangentScaleMode.Manual)
+                interpComputedTangentScale = autoScale;
+
+            float   scaleStart = effectiveScaleMode != InterpTangentScaleMode.Manual ? autoScale
+                               : interpTangentScaleIndividual ? interpStartTangentScale : interpTangentScale;
+            float   scaleEnd   = effectiveScaleMode != InterpTangentScaleMode.Manual ? autoScale
+                               : interpTangentScaleIndividual ? interpEndTangentScale   : interpTangentScale;
+            Vector3 t0         = dir0 * handleLen * scaleStart;
+            Vector3 t1         = dir1 * handleLen * scaleEnd;
 
             int steps     = Mathf.Max(resolution, 10);
             paramPoints   = new List<Vector3>(steps + 1);
@@ -453,11 +503,15 @@ namespace SizimityperMeshDeformer
                 float   dMag    = mTan.magnitude;
                 float   kappa   = dMag > 1e-6f ? cross.magnitude / (dMag * dMag * dMag) : 0f;
                 float   R       = kappa > 1e-6f ? 1f / kappa : float.MaxValue;
-                float   fCoeff  = paramAutoCalcFriction ? CalcFrictionFromSpeed(paramDesignSpeed) : paramFrictionCoeff;
-                float   supelev = Mathf.Clamp((paramDesignSpeed * paramDesignSpeed) / (127f * R) - fCoeff, 0f, 0.12f);
+                float   V       = CalcDesignSpeedFromR(R);
+                float   fCoeff  = CalcFrictionFromSpeed(V);
+                float   supelev = Mathf.Clamp(V * V / (127f * R) - fCoeff, 0f, 0.12f);
                 float   cantSgn = cross.y < 0f ? 1f : -1f;
                 midCant = cantSgn * Mathf.Atan(supelev) * Mathf.Rad2Deg;
-                interpMidCantComputed = midCant;
+                interpMidCantComputed     = midCant;
+                interpComputedR           = R < float.MaxValue ? R : 0f;
+                interpComputedDesignSpeed = V;
+                interpComputedFriction    = fCoeff;
             }
             else
             {
