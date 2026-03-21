@@ -48,7 +48,14 @@ public class BezierRoadDeformerEditor : Editor
     private void OnEditorUpdate()
     {
         if (_target == null) return;
-        if (!_target.IsPreviewActive()) return;
+
+        // プレビューOFF時: パラメータ変更後にシーンを再描画してカーブを可視化
+        if (!_target.IsPreviewActive())
+        {
+            if (!_target.paramPointsBuilt)
+                SceneView.RepaintAll();
+            return;
+        }
 
         bool changed = DetectChanges();
         if (changed)
@@ -527,6 +534,7 @@ public class BezierRoadDeformerEditor : Editor
                         CacheAll();
                     }
                 }
+                if (!ConfirmIfExcessiveTiles()) return;
                 _target.arcLengthLUT = null;
                 _target.UpdatePreview();
             }
@@ -537,6 +545,52 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUILayout.Space(4);
         if (GUILayout.Button("Bake"))
             DoBake();
+    }
+
+    private static readonly int TILE_WARN_THRESHOLD = 500;
+
+    /// <summary>タイル数が過大な場合に確認ダイアログを表示。続行するなら true を返す。</summary>
+    private bool ConfirmIfExcessiveTiles()
+    {
+        int maxTiles = CalcMaxEstimatedTileCount();
+        if (maxTiles <= TILE_WARN_THRESHOLD) return true;
+
+        return EditorUtility.DisplayDialog(
+            "タイル数が多すぎる可能性があります",
+            $"推定タイル数: {maxTiles} 回\n\n" +
+            $"軸線方向「{_target.axisDirection}」に対するメッシュの奥行きが非常に小さいため、\n" +
+            $"繰り返し回数が過大になっています。\n\n" +
+            "軸線方向の設定が正しいか確認してください。\n\nそれでも続けますか？",
+            "続ける",
+            "キャンセル");
+    }
+
+    private int CalcMaxEstimatedTileCount()
+    {
+        if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0) return 0;
+        if (_target.arcLengthLUT == null || !_target.paramPointsBuilt)
+            _target.BuildArcLengthLUT();
+        if (_target.totalArcLength <= 0f) return 0;
+
+        int max = 0;
+        foreach (var entry in _target.sourceMeshEntries)
+        {
+            if (entry.mesh == null) continue;
+            var verts = entry.mesh.vertices;
+            float minA = float.MaxValue, maxA = float.MinValue;
+            foreach (var v in verts)
+            {
+                float a = _target.axisDirection == AxisDirection.X ? v.x
+                        : _target.axisDirection == AxisDirection.Y ? v.y
+                        : v.z;
+                if (a < minA) minA = a;
+                if (a > maxA) maxA = a;
+            }
+            float meshLen = Mathf.Max(maxA - minA, 1e-6f);
+            int tiles = Mathf.Max(1, Mathf.CeilToInt(_target.totalArcLength / meshLen));
+            if (tiles > max) max = tiles;
+        }
+        return max;
     }
 
     // ============================================================
@@ -558,6 +612,8 @@ public class BezierRoadDeformerEditor : Editor
                 return;
             }
         }
+
+        if (!ConfirmIfExcessiveTiles()) return;
 
         Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake");
 
@@ -599,7 +655,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // Scene GUI
+    // Scene GUI（選択時のインタラクティブハンドル）
     // ============================================================
 
     private void OnSceneGUI()
@@ -607,21 +663,7 @@ public class BezierRoadDeformerEditor : Editor
         _target = (BezierRoadDeformer)target;
         if (_target == null) return;
 
-        if (!_target.paramPointsBuilt || _target.paramPoints == null)
-            _target.BuildArcLengthLUT();
-
-        if (_target.paramPoints == null || _target.paramPoints.Count < 2) return;
-
-        Handles.color = Color.cyan;
-        var pts = _target.paramPoints;
-        for (int i = 0; i < pts.Count - 1; i++)
-        {
-            Vector3 a = _target.transform.TransformPoint(pts[i]);
-            Vector3 b = _target.transform.TransformPoint(pts[i + 1]);
-            Handles.DrawLine(a, b);
-        }
-
-        // For interpolation mode, highlight start/end objects
+        // Interpolation モードの始点・終点ハンドル
         if (_target.curveMode == CurveMode.Interpolation)
         {
             if (_target.interpStartObject != null)
@@ -640,6 +682,87 @@ public class BezierRoadDeformerEditor : Editor
                 Handles.DrawLine(_target.interpEndObject.position,
                     _target.interpEndObject.position + _target.interpEndTangent.normalized * sz * 3f);
             }
+        }
+    }
+
+    // ============================================================
+    // Gizmo（選択状態に関係なく常に描画）
+    // ============================================================
+
+    [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected | GizmoType.InSelectionHierarchy)]
+    static void DrawCurveGizmo(BezierRoadDeformer target, GizmoType gizmoType)
+    {
+        if (!target.paramPointsBuilt || target.paramPoints == null)
+            target.BuildArcLengthLUT();
+        if (target.paramPoints == null || target.paramPoints.Count < 2) return;
+
+        var   pts   = target.paramPoints;
+        var   lut   = target.arcLengthLUT;
+        float total = target.totalArcLength;
+
+        // 緩和曲線区間の判定
+        bool  hasEase = target.curveMode == CurveMode.Curve
+                     && target.paramUseEasement
+                     && target.paramEasementLength > 0f;
+        float easeLen = hasEase ? target.paramEasementLength : 0f;
+        float arcEnd  = total - easeLen;
+
+        // ---- 1. カーブライン（緩和曲線は黄、円弧はオレンジ）----
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            float s = lut != null && lut.Length > i ? lut[i] : 0f;
+            bool  isEase = hasEase && (s < easeLen || s > arcEnd);
+            Gizmos.color = isEase ? new Color(1f, 0.9f, 0f) : new Color(1f, 0.5f, 0.1f);
+            Gizmos.DrawLine(target.transform.TransformPoint(pts[i]),
+                            target.transform.TransformPoint(pts[i + 1]));
+        }
+
+        if (total <= 0f) return;
+
+        // ---- 2. 断面（幅・高さ・カント）を等間隔で描画 ----
+        float minR = -0.5f, maxR = 0.5f, minU = 0f, maxU = 1f;
+        if (target.sourceMeshEntries != null && target.sourceMeshEntries.Count > 0)
+        {
+            float tMinR = float.MaxValue, tMaxR = float.MinValue;
+            float tMinU = float.MaxValue, tMaxU = float.MinValue;
+            foreach (var entry in target.sourceMeshEntries)
+            {
+                if (entry.mesh == null) continue;
+                foreach (var v in entry.mesh.vertices)
+                {
+                    float r, u;
+                    switch (target.axisDirection)
+                    {
+                        case AxisDirection.X: r = v.z; u = v.y; break;
+                        case AxisDirection.Y: r = v.x; u = v.z; break;
+                        default:             r = v.x; u = v.y; break;
+                    }
+                    if (r < tMinR) tMinR = r;
+                    if (r > tMaxR) tMaxR = r;
+                    if (u < tMinU) tMinU = u;
+                    if (u > tMaxU) tMaxU = u;
+                }
+            }
+            if (tMinR < tMaxR) { minR = tMinR; maxR = tMaxR; }
+            if (tMinU < tMaxU) { minU = tMinU; maxU = tMaxU; }
+        }
+
+        Gizmos.color = new Color(1f, 0.8f, 0.2f, 0.9f);
+        for (int j = 0; j <= 10; j++)
+        {
+            float s    = (float)j / 10f * total;
+            float cant = target.GetCantAtS(s);
+            var   sp   = target.EvaluateAtArcLength(s, cant);
+
+            Vector3 p0 = sp.position + sp.binormal * minR + sp.normal * minU; // 底・左
+            Vector3 p1 = sp.position + sp.binormal * maxR + sp.normal * minU; // 底・右
+            Vector3 p2 = sp.position + sp.binormal * maxR + sp.normal * maxU; // 上・右
+            Vector3 p3 = sp.position + sp.binormal * minR + sp.normal * maxU; // 上・左
+
+            Gizmos.DrawLine(p0, p1);
+            Gizmos.DrawLine(p1, p2);
+            Gizmos.DrawLine(p2, p3);
+            Gizmos.DrawLine(p3, p0);
         }
     }
 }

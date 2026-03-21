@@ -73,7 +73,14 @@ public class BezierRoadDeformerWindow : EditorWindow
     private void OnEditorUpdate()
     {
         if (_target == null) return;
-        if (!_target.IsPreviewActive()) return;
+
+        // プレビューOFF時: パラメータ変更後にシーンを再描画してカーブを可視化
+        if (!_target.IsPreviewActive())
+        {
+            if (!_target.paramPointsBuilt)
+                SceneView.RepaintAll();
+            return;
+        }
 
         bool changed = DetectChanges();
         if (changed)
@@ -312,10 +319,57 @@ public class BezierRoadDeformerWindow : EditorWindow
                     return;
                 }
             }
+            if (!ConfirmIfExcessiveTiles()) return;
             _target.arcLengthLUT = null;
             _target.UpdatePreview();
         }
         EditorUtility.SetDirty(_target);
+    }
+
+    private static readonly int TILE_WARN_THRESHOLD = 500;
+
+    private bool ConfirmIfExcessiveTiles()
+    {
+        int maxTiles = CalcMaxEstimatedTileCount();
+        if (maxTiles <= TILE_WARN_THRESHOLD) return true;
+
+        return EditorUtility.DisplayDialog(
+            "タイル数が多すぎる可能性があります",
+            $"推定タイル数: {maxTiles} 回\n\n" +
+            $"軸線方向「{_target.axisDirection}」に対するメッシュの奥行きが非常に小さいため、\n" +
+            $"繰り返し回数が過大になっています。\n\n" +
+            "軸線方向の設定が正しいか確認してください。\n\nそれでも続けますか？",
+            "続ける",
+            "キャンセル");
+    }
+
+    private int CalcMaxEstimatedTileCount()
+    {
+        if (_target == null) return 0;
+        if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0) return 0;
+        if (_target.arcLengthLUT == null || !_target.paramPointsBuilt)
+            _target.BuildArcLengthLUT();
+        if (_target.totalArcLength <= 0f) return 0;
+
+        int max = 0;
+        foreach (var entry in _target.sourceMeshEntries)
+        {
+            if (entry.mesh == null) continue;
+            var verts = entry.mesh.vertices;
+            float minA = float.MaxValue, maxA = float.MinValue;
+            foreach (var v in verts)
+            {
+                float a = _target.axisDirection == AxisDirection.X ? v.x
+                        : _target.axisDirection == AxisDirection.Y ? v.y
+                        : v.z;
+                if (a < minA) minA = a;
+                if (a > maxA) maxA = a;
+            }
+            float meshLen = Mathf.Max(maxA - minA, 1e-6f);
+            int tiles = Mathf.Max(1, Mathf.CeilToInt(_target.totalArcLength / meshLen));
+            if (tiles > max) max = tiles;
+        }
+        return max;
     }
 
     // ---- Base Object ----------------------------------------
@@ -616,6 +670,8 @@ public class BezierRoadDeformerWindow : EditorWindow
                 return;
             }
         }
+
+        if (!ConfirmIfExcessiveTiles()) return;
 
         Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake");
 
