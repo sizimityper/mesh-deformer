@@ -55,6 +55,8 @@ namespace SizimityperMeshDeformer
         public bool  paramGradeVerticalCurve = false; // true: sinusoidal grade (0→peak→0)
         public bool  paramUseEasement    = true;
         public float paramEasementLength = 50f;
+        public bool  paramCurveAutoGrade = false; // true: grade derived from height
+        public float paramCurveHeight    = 0f;    // target height (used when paramCurveAutoGrade)
 
         // Curve: auto-calculate from design speed
         public bool  paramAutoCalcDesignSpeed = true;
@@ -71,7 +73,9 @@ namespace SizimityperMeshDeformer
         public Vector3   interpEndTangent   = Vector3.forward;
 
         // --- Straight Mode ---
-        public float paramStraightLength = 100f;   // uses paramGrade
+        public float paramStraightLength    = 100f;  // uses paramGrade
+        public bool  paramStraightAutoGrade = false; // true: grade derived from height
+        public float paramStraightHeight    = 0f;    // target height (used when paramStraightAutoGrade)
 
         // ============================================================
         // Deform Mode

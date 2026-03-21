@@ -26,6 +26,8 @@ public class BezierRoadDeformerEditor : Editor
 
     // Straight mode
     private float _prevStraightLength;
+    private bool  _prevStraightAutoGrade;
+    private float _prevStraightHeight;
 
     // ============================================================
 
@@ -135,6 +137,8 @@ public class BezierRoadDeformerEditor : Editor
 
             case CurveMode.Straight:
                 return _target.paramStraightLength     != _prevStraightLength
+                    || _target.paramStraightAutoGrade  != _prevStraightAutoGrade
+                    || _target.paramStraightHeight     != _prevStraightHeight
                     || _target.paramGrade              != _prevParamGrade
                     || _target.paramGradeVerticalCurve != _prevGradeVerticalCurve;
         }
@@ -170,7 +174,9 @@ public class BezierRoadDeformerEditor : Editor
         _prevInterpStartTan   = _target.interpStartTangent;
         _prevInterpEndTan     = _target.interpEndTangent;
 
-        _prevStraightLength   = _target.paramStraightLength;
+        _prevStraightLength     = _target.paramStraightLength;
+        _prevStraightAutoGrade  = _target.paramStraightAutoGrade;
+        _prevStraightHeight     = _target.paramStraightHeight;
     }
 
     // ============================================================
@@ -265,24 +271,41 @@ public class BezierRoadDeformerEditor : Editor
     {
         EditorGUI.BeginChangeCheck();
 
-        float newR      = EditorGUILayout.FloatField("R (曲率半径) m",  _target.paramR);
-        float newAngle  = EditorGUILayout.FloatField("展開角 °",         _target.paramAngle);
-        bool  newRight  = EditorGUILayout.Toggle("右カーブ",             _target.paramTurnRight);
-        float newGrade  = EditorGUILayout.FloatField("縦断勾配 %",        _target.paramGrade);
+        float newR         = EditorGUILayout.FloatField("R (曲率半径) m",  _target.paramR);
+        float newAngle     = EditorGUILayout.FloatField("展開角 °",         _target.paramAngle);
+        bool  newRight     = EditorGUILayout.Toggle("右カーブ",             _target.paramTurnRight);
+        bool  newAutoGrade = EditorGUILayout.Toggle("高さから勾配を自動算出", _target.paramCurveAutoGrade);
+        float newGrade, newCurveHeight;
+        if (newAutoGrade)
+        {
+            newCurveHeight = EditorGUILayout.FloatField("高さ m", _target.paramCurveHeight);
+            float arcLen   = CalcCurveArcLength(Mathf.Max(0.1f, newR), Mathf.Clamp(newAngle, 0f, 720f),
+                                                _target.paramUseEasement, _target.paramEasementLength);
+            newGrade = arcLen > 0f ? newCurveHeight / arcLen * 100f : 0f;
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  縦断勾配 (算出) %", newGrade);
+        }
+        else
+        {
+            newCurveHeight = _target.paramCurveHeight;
+            newGrade       = EditorGUILayout.FloatField("縦断勾配 %", _target.paramGrade);
+        }
         bool  newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）",   _target.paramGradeVerticalCurve);
         bool  newEase   = EditorGUILayout.Toggle("緩和曲線",              _target.paramUseEasement);
 
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Curve Params");
-            _target.paramR                 = Mathf.Max(0.1f, newR);
-            _target.paramAngle             = Mathf.Clamp(newAngle, 0f, 720f);
-            _target.paramTurnRight         = newRight;
-            _target.paramGrade             = newGrade;
+            _target.paramR                  = Mathf.Max(0.1f, newR);
+            _target.paramAngle              = Mathf.Clamp(newAngle, 0f, 720f);
+            _target.paramTurnRight          = newRight;
+            _target.paramCurveAutoGrade     = newAutoGrade;
+            _target.paramCurveHeight        = newCurveHeight;
+            _target.paramGrade              = newGrade;
             _target.paramGradeVerticalCurve = newVCurve;
-            _target.paramUseEasement       = newEase;
-            _target.arcLengthLUT           = null;
-            _target.paramPointsBuilt       = false;
+            _target.paramUseEasement        = newEase;
+            _target.arcLengthLUT            = null;
+            _target.paramPointsBuilt        = false;
             EditorUtility.SetDirty(_target);
         }
 
@@ -424,17 +447,33 @@ public class BezierRoadDeformerEditor : Editor
     private void DrawStraightModeUI()
     {
         EditorGUI.BeginChangeCheck();
-        float newLen    = EditorGUILayout.FloatField("長さ m",           _target.paramStraightLength);
-        float newGrade  = EditorGUILayout.FloatField("縦断勾配 %",       _target.paramGrade);
-        bool  newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）", _target.paramGradeVerticalCurve);
+        float newLen       = EditorGUILayout.FloatField("長さ m",               _target.paramStraightLength);
+        bool  newAutoGrade = EditorGUILayout.Toggle("高さから勾配を自動算出",    _target.paramStraightAutoGrade);
+        float newGrade, newHeight;
+        if (newAutoGrade)
+        {
+            newHeight = EditorGUILayout.FloatField("高さ m", _target.paramStraightHeight);
+            float len = Mathf.Max(0.1f, newLen);
+            newGrade  = newHeight / len * 100f;
+            using (new EditorGUI.DisabledGroupScope(true))
+                EditorGUILayout.FloatField("  縦断勾配 (算出) %", newGrade);
+        }
+        else
+        {
+            newHeight = _target.paramStraightHeight;
+            newGrade  = EditorGUILayout.FloatField("縦断勾配 %", _target.paramGrade);
+        }
+        bool newVCurve = EditorGUILayout.Toggle("両端水平（縦断曲線）", _target.paramGradeVerticalCurve);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Straight Params");
-            _target.paramStraightLength      = Mathf.Max(0.1f, newLen);
-            _target.paramGrade               = newGrade;
-            _target.paramGradeVerticalCurve  = newVCurve;
-            _target.arcLengthLUT             = null;
-            _target.paramPointsBuilt         = false;
+            _target.paramStraightLength     = Mathf.Max(0.1f, newLen);
+            _target.paramStraightAutoGrade  = newAutoGrade;
+            _target.paramStraightHeight     = newHeight;
+            _target.paramGrade              = newGrade;
+            _target.paramGradeVerticalCurve = newVCurve;
+            _target.arcLengthLUT            = null;
+            _target.paramPointsBuilt        = false;
             EditorUtility.SetDirty(_target);
         }
     }
@@ -545,6 +584,16 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUILayout.Space(4);
         if (GUILayout.Button("Bake"))
             DoBake();
+    }
+
+    /// <summary>Curve モードの弧長を近似計算（LUT不要）</summary>
+    private static float CalcCurveArcLength(float R, float angleDeg, bool useEasement, float easementLength)
+    {
+        float totalAngleRad = angleDeg * Mathf.Deg2Rad;
+        float easLen        = useEasement ? Mathf.Max(easementLength, 0f) : 0f;
+        float easAngle      = easLen > 0f ? easLen / (2f * R) : 0f;
+        float arcAngleRad   = Mathf.Max(0f, totalAngleRad - 2f * easAngle);
+        return 2f * easLen + R * arcAngleRad;
     }
 
     private static readonly int TILE_WARN_THRESHOLD = 500;
