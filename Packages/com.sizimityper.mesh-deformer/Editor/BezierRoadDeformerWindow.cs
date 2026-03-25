@@ -144,8 +144,8 @@ public class BezierRoadDeformerWindow : EditorWindow
 
     private bool DetectChanges()
     {
-        if (_target.curveMode       != _prevCurveMode)       return true;
-        if (_target.deformMode      != _prevDeformMode)      return true;
+        if (_target.curveMode    != _prevCurveMode)    return true;
+        if (_target.deformMode   != _prevDeformMode)   return true;
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
 
         switch (_target.curveMode)
@@ -199,9 +199,9 @@ public class BezierRoadDeformerWindow : EditorWindow
     private void CacheAll()
     {
         if (_target == null) return;
-        _prevCurveMode        = _target.curveMode;
-        _prevDeformMode       = _target.deformMode;
-        _prevTileAxisPadding  = _target.tileAxisPadding;
+        _prevCurveMode       = _target.curveMode;
+        _prevDeformMode      = _target.deformMode;
+        _prevTileAxisPadding = _target.tileAxisPadding;
         _prevParamR           = _target.paramR;
         _prevParamAngle       = _target.paramAngle;
         _prevTurnRight        = _target.paramTurnRight;
