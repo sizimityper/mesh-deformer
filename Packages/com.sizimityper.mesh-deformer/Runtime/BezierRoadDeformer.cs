@@ -96,7 +96,7 @@ namespace SizimityperMeshDeformer
         // ============================================================
         // Deform Mode
         // ============================================================
-        public DeformMode deformMode = DeformMode.Cut;
+        public DeformMode deformMode    = DeformMode.Cut;
 
         // ============================================================
         // Prefab Placement
@@ -673,17 +673,30 @@ namespace SizimityperMeshDeformer
             BuildArcLengthLUT();
             if (totalArcLength <= 0f) return result;
 
+            // Pre-pass: shared axis bounds across ALL meshes so every mesh uses identical tile length
+            float sharedMin = float.MaxValue, sharedMax = float.MinValue;
+            foreach (var entry in sourceMeshEntries)
+            {
+                if (entry.mesh == null) continue;
+                foreach (var v in entry.mesh.vertices)
+                {
+                    float a = GetAxisValue(v);
+                    if (a < sharedMin) sharedMin = a;
+                    if (a > sharedMax) sharedMax = a;
+                }
+            }
+
             foreach (var entry in sourceMeshEntries)
             {
                 if (entry.mesh == null) { result.Add(null); continue; }
                 result.Add(deformMode == DeformMode.Stretch
-                    ? DeformStretch(entry.mesh)
-                    : DeformCut(entry.mesh));
+                    ? DeformStretch(entry.mesh, sharedMin, sharedMax)
+                    : DeformCut(entry.mesh, sharedMin, sharedMax));
             }
             return result;
         }
 
-        private Mesh DeformStretch(Mesh srcMesh)
+        private Mesh DeformStretch(Mesh srcMesh, float meshMinA, float meshMaxA)
         {
             var srcVerts = srcMesh.vertices;
             var srcNorms = srcMesh.normals;
@@ -691,18 +704,9 @@ namespace SizimityperMeshDeformer
             var  srcUVs     = srcMesh.uv;
             int  subCount   = srcMesh.subMeshCount;
 
-            // Per-mesh axis bounds
-            float meshMinA = float.MaxValue, meshMaxA = float.MinValue;
-            foreach (var v in srcVerts)
-            {
-                float a = GetAxisValue(v);
-                if (a < meshMinA) meshMinA = a;
-                if (a > meshMaxA) meshMaxA = a;
-            }
             float meshLen   = Mathf.Max(meshMaxA - meshMinA, 1e-6f);
             int   tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / meshLen));
 
-            // Padded range for localT
             float adjMin   = meshMinA + tileAxisPadding;
             float adjMax   = meshMaxA - tileAxisPadding;
             float adjRange = Mathf.Max(adjMax - adjMin, 1e-6f);
@@ -763,24 +767,26 @@ namespace SizimityperMeshDeformer
             }
 
             // Position weld at junctions (1 cm threshold)
-            const float SNAP_SQ = 0.01f * 0.01f;
-            for (int tile = 0; tile < tileCount - 1; tile++)
             {
-                foreach (int ei in tileEndVerts[tile])
+                const float SNAP_SQ = 0.01f * 0.01f;
+                for (int tile = 0; tile < tileCount - 1; tile++)
                 {
-                    int bestSj = -1; float bestDist = SNAP_SQ;
-                    var nextStarts = tileStartVerts[tile + 1];
-                    for (int sj = 0; sj < nextStarts.Count; sj++)
+                    foreach (int ei in tileEndVerts[tile])
                     {
-                        float d = (combinedVerts[ei] - combinedVerts[nextStarts[sj]]).sqrMagnitude;
-                        if (d < bestDist) { bestDist = d; bestSj = sj; }
+                        int bestSj = -1; float bestDist = SNAP_SQ;
+                        var nextStarts = tileStartVerts[tile + 1];
+                        for (int sj = 0; sj < nextStarts.Count; sj++)
+                        {
+                            float d = (combinedVerts[ei] - combinedVerts[nextStarts[sj]]).sqrMagnitude;
+                            if (d < bestDist) { bestDist = d; bestSj = sj; }
+                        }
+                        if (bestSj < 0) continue;
+                        int si = nextStarts[bestSj];
+                        Vector3 avgPos  = (combinedVerts[ei] + combinedVerts[si]) * 0.5f;
+                        combinedVerts[ei] = avgPos; combinedVerts[si] = avgPos;
+                        Vector3 avgNorm = (combinedNorms[ei] + combinedNorms[si]).normalized;
+                        combinedNorms[ei] = avgNorm; combinedNorms[si] = avgNorm;
                     }
-                    if (bestSj < 0) continue;
-                    int si = nextStarts[bestSj];
-                    Vector3 avgPos  = (combinedVerts[ei] + combinedVerts[si]) * 0.5f;
-                    combinedVerts[ei] = avgPos; combinedVerts[si] = avgPos;
-                    Vector3 avgNorm = (combinedNorms[ei] + combinedNorms[si]).normalized;
-                    combinedNorms[ei] = avgNorm; combinedNorms[si] = avgNorm;
                 }
             }
 
@@ -801,7 +807,7 @@ namespace SizimityperMeshDeformer
             return mesh;
         }
 
-        private Mesh DeformCut(Mesh srcMesh)
+        private Mesh DeformCut(Mesh srcMesh, float meshMinA, float meshMaxA)
         {
             var srcVerts = srcMesh.vertices;
             var srcNorms = srcMesh.normals;
@@ -809,18 +815,9 @@ namespace SizimityperMeshDeformer
             var  srcUVs     = srcMesh.uv;
             int  subCount   = srcMesh.subMeshCount;
 
-            // Per-mesh axis bounds
-            float meshMinA = float.MaxValue, meshMaxA = float.MinValue;
-            foreach (var v in srcVerts)
-            {
-                float a = GetAxisValue(v);
-                if (a < meshMinA) meshMinA = a;
-                if (a > meshMaxA) meshMaxA = a;
-            }
             float meshLen = Mathf.Max(meshMaxA - meshMinA, 1e-6f);
             int   tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / meshLen));
 
-            // Padded range for localT
             float adjMin   = meshMinA + tileAxisPadding;
             float adjMax   = meshMaxA - tileAxisPadding;
             float adjRange = Mathf.Max(adjMax - adjMin, 1e-6f);
@@ -942,24 +939,26 @@ namespace SizimityperMeshDeformer
             }
 
             // Position weld at junctions (1 cm threshold)
-            const float SNAP_SQ = 0.01f * 0.01f;
-            for (int tile = 0; tile < tileCount - 1; tile++)
             {
-                foreach (int ei in tileEndVerts[tile])
+                const float SNAP_SQ = 0.01f * 0.01f;
+                for (int tile = 0; tile < tileCount - 1; tile++)
                 {
-                    int bestSj = -1; float bestDist = SNAP_SQ;
-                    var nextStarts = tileStartVerts[tile + 1];
-                    for (int sj = 0; sj < nextStarts.Count; sj++)
+                    foreach (int ei in tileEndVerts[tile])
                     {
-                        float d = (combinedVerts[ei] - combinedVerts[nextStarts[sj]]).sqrMagnitude;
-                        if (d < bestDist) { bestDist = d; bestSj = sj; }
+                        int bestSj = -1; float bestDist = SNAP_SQ;
+                        var nextStarts = tileStartVerts[tile + 1];
+                        for (int sj = 0; sj < nextStarts.Count; sj++)
+                        {
+                            float d = (combinedVerts[ei] - combinedVerts[nextStarts[sj]]).sqrMagnitude;
+                            if (d < bestDist) { bestDist = d; bestSj = sj; }
+                        }
+                        if (bestSj < 0) continue;
+                        int si = nextStarts[bestSj];
+                        Vector3 avgPos = (combinedVerts[ei] + combinedVerts[si]) * 0.5f;
+                        combinedVerts[ei] = avgPos; combinedVerts[si] = avgPos;
+                        Vector3 avgNorm = (combinedNorms[ei] + combinedNorms[si]).normalized;
+                        combinedNorms[ei] = avgNorm; combinedNorms[si] = avgNorm;
                     }
-                    if (bestSj < 0) continue;
-                    int si = nextStarts[bestSj];
-                    Vector3 avgPos = (combinedVerts[ei] + combinedVerts[si]) * 0.5f;
-                    combinedVerts[ei] = avgPos; combinedVerts[si] = avgPos;
-                    Vector3 avgNorm = (combinedNorms[ei] + combinedNorms[si]).normalized;
-                    combinedNorms[ei] = avgNorm; combinedNorms[si] = avgNorm;
                 }
             }
 
