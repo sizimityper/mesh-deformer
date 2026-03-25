@@ -825,11 +825,14 @@ namespace SizimityperMeshDeformer
             float adjMax   = meshMaxA - tileAxisPadding;
             float adjRange = Mathf.Max(adjMax - adjMin, 1e-6f);
 
-            var combinedVerts   = new List<Vector3>();
-            var combinedNorms   = new List<Vector3>();
-            var combinedUVs     = new List<Vector2>();
-            var combinedTrimmed = new List<bool>();
-            var subTriLists     = new List<List<int>>();
+            var combinedVerts    = new List<Vector3>();
+            var combinedNorms    = new List<Vector3>();
+            var combinedUVs      = new List<Vector2>();
+            var combinedTrimmed  = new List<bool>();
+            var combinedSRaw     = new List<float>();
+            var combinedRightOff = new List<float>();
+            var combinedUpOff    = new List<float>();
+            var subTriLists      = new List<List<int>>();
             for (int sub = 0; sub < subCount; sub++) subTriLists.Add(new List<int>());
 
             var tileEndVerts   = new List<List<int>>();
@@ -863,6 +866,9 @@ namespace SizimityperMeshDeformer
                     combinedNorms.Add(hasNormals ? TransformNormal(srcNorms[i], sp) : Vector3.up);
                     combinedUVs.Add(srcUVs != null && i < srcUVs.Length ? srcUVs[i] : Vector2.zero);
                     combinedTrimmed.Add(trimmed);
+                    combinedSRaw.Add(sRaw);
+                    combinedRightOff.Add(rightOff);
+                    combinedUpOff.Add(upOff);
 
                     if (localT <= 0f) thisStarts.Add(baseIdx + i);
                     if (localT >= 1f) thisEnds.Add(baseIdx + i);
@@ -870,6 +876,10 @@ namespace SizimityperMeshDeformer
 
                 tileStartVerts.Add(thisStarts);
                 tileEndVerts.Add(thisEnds);
+
+                // Precompute boundary SplinePoint once per tile
+                float       boundaryCant = GetCantAtS(totalArcLength);
+                SplinePoint boundarySP   = EvaluateAtArcLength(totalArcLength, boundaryCant);
 
                 for (int sub = 0; sub < subCount; sub++)
                 {
@@ -879,11 +889,54 @@ namespace SizimityperMeshDeformer
                         int ia = baseIdx + tris[t];
                         int ib = baseIdx + tris[t + 1];
                         int ic = baseIdx + tris[t + 2];
-                        // Skip triangles where any vertex falls beyond the spline end
-                        if (combinedTrimmed[ia] || combinedTrimmed[ib] || combinedTrimmed[ic]) continue;
-                        subTriLists[sub].Add(ia);
-                        subTriLists[sub].Add(ib);
-                        subTriLists[sub].Add(ic);
+
+                        bool trimA = combinedSRaw[ia] > totalArcLength;
+                        bool trimB = combinedSRaw[ib] > totalArcLength;
+                        bool trimC = combinedSRaw[ic] > totalArcLength;
+                        if (trimA && trimB && trimC) continue;
+
+                        if (!trimA && !trimB && !trimC)
+                        {
+                            subTriLists[sub].Add(ia);
+                            subTriLists[sub].Add(ib);
+                            subTriLists[sub].Add(ic);
+                            continue;
+                        }
+
+                        // Sutherland-Hodgman clip against s <= totalArcLength
+                        int[] polyIdx = { ia, ib, ic };
+                        var   clipped = new List<int>(5);
+                        for (int e = 0; e < 3; e++)
+                        {
+                            int  curr   = polyIdx[e];
+                            int  next   = polyIdx[(e + 1) % 3];
+                            bool currIn = combinedSRaw[curr] <= totalArcLength;
+                            bool nextIn = combinedSRaw[next] <= totalArcLength;
+                            if (currIn) clipped.Add(curr);
+                            if (currIn != nextIn)
+                            {
+                                float sA   = combinedSRaw[curr], sB = combinedSRaw[next];
+                                float tt   = (totalArcLength - sA) / (sB - sA);
+                                float rOff = Mathf.Lerp(combinedRightOff[curr], combinedRightOff[next], tt);
+                                float uOff = Mathf.Lerp(combinedUpOff[curr],    combinedUpOff[next],    tt);
+                                Vector3 bWorldPos = boundarySP.position + boundarySP.binormal * rOff + boundarySP.normal * uOff;
+                                combinedVerts.Add(transform.InverseTransformPoint(bWorldPos));
+                                combinedNorms.Add(Vector3.Slerp(combinedNorms[curr], combinedNorms[next], tt).normalized);
+                                combinedUVs.Add(Vector2.Lerp(combinedUVs[curr], combinedUVs[next], tt));
+                                combinedSRaw.Add(totalArcLength);
+                                combinedRightOff.Add(rOff);
+                                combinedUpOff.Add(uOff);
+                                combinedTrimmed.Add(false);
+                                clipped.Add(combinedVerts.Count - 1);
+                            }
+                        }
+                        // Fan triangulation
+                        for (int v = 1; v < clipped.Count - 1; v++)
+                        {
+                            subTriLists[sub].Add(clipped[0]);
+                            subTriLists[sub].Add(clipped[v]);
+                            subTriLists[sub].Add(clipped[v + 1]);
+                        }
                     }
                 }
             }
