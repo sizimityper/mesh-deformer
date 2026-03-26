@@ -37,6 +37,9 @@ public class BezierRoadDeformerWindow : EditorWindow
     private bool  _prevStraightAutoGrade;
     private float _prevStraightHeight;
 
+    // Prefab placement
+    private int _prevPlacementRulesHash;
+
     // ============================================================
 
     void OnEnable()
@@ -147,6 +150,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         if (_target.curveMode    != _prevCurveMode)    return true;
         if (_target.deformMode   != _prevDeformMode)   return true;
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
+        if (ComputePlacementRulesHash() != _prevPlacementRulesHash) return true;
 
         switch (_target.curveMode)
         {
@@ -234,6 +238,23 @@ public class BezierRoadDeformerWindow : EditorWindow
         _prevStraightLength     = _target.paramStraightLength;
         _prevStraightAutoGrade  = _target.paramStraightAutoGrade;
         _prevStraightHeight     = _target.paramStraightHeight;
+        _prevPlacementRulesHash = ComputePlacementRulesHash();
+    }
+
+    private int ComputePlacementRulesHash()
+    {
+        if (_target.placementRules == null) return 0;
+        int h = _target.placementRules.Count;
+        foreach (var r in _target.placementRules)
+        {
+            if (r == null) continue;
+            h = h * 31 + (r.prefab != null ? r.prefab.GetHashCode() : 0);
+            h = h * 31 + r.intervalM.GetHashCode();
+            h = h * 31 + r.offsetRight.GetHashCode();
+            h = h * 31 + r.offsetUp.GetHashCode();
+            h = h * 31 + r.followCant.GetHashCode();
+        }
+        return h;
     }
 
     // ============================================================
