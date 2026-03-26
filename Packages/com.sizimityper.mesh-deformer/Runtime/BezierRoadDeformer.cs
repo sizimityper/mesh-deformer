@@ -23,10 +23,9 @@ namespace SizimityperMeshDeformer
     public class PrefabPlacementRule
     {
         public GameObject prefab;
-        public float intervalM   = 20f;
-        public float offsetRight = 0f;
-        public float offsetUp    = 0f;
-        public bool  followCant  = true;
+        public Vector3 positionOffset  = Vector3.zero;
+        public Vector3 rotationOffset  = Vector3.zero;
+        public bool    followCant      = true;
     }
 
     [ExecuteInEditMode]
@@ -67,6 +66,8 @@ namespace SizimityperMeshDeformer
         public float paramFrictionCoeff       = 0.13f;
         public bool  paramAutoApplyCant       = true;
         public bool  paramAutoCalcEasement    = true;
+        public bool  invertCant              = false;
+        public bool  paramIgnoreCantLimit    = false;
 
         // --- Interpolation Mode ---
         public Transform   interpStartObject;
@@ -258,7 +259,7 @@ namespace SizimityperMeshDeformer
                 : paramFrictionCoeff;
             float R = Mathf.Max(paramR, 0.1f);
             float i = (paramDesignSpeed * paramDesignSpeed) / (127f * R) - f;
-            i = Mathf.Clamp(i, 0f, 0.12f);
+            i = paramIgnoreCantLimit ? Mathf.Max(i, 0f) : Mathf.Clamp(i, 0f, 0.10f);
             return Mathf.Atan(i) * Mathf.Rad2Deg;
         }
 
@@ -505,7 +506,8 @@ namespace SizimityperMeshDeformer
                 float   R       = kappa > 1e-6f ? 1f / kappa : float.MaxValue;
                 float   V       = CalcDesignSpeedFromR(R);
                 float   fCoeff  = CalcFrictionFromSpeed(V);
-                float   supelev = Mathf.Clamp(V * V / (127f * R) - fCoeff, 0f, 0.12f);
+                float   rawI    = V * V / (127f * R) - fCoeff;
+                float   supelev = paramIgnoreCantLimit ? Mathf.Max(rawI, 0f) : Mathf.Clamp(rawI, 0f, 0.10f);
                 float   cantSgn = cross.y < 0f ? 1f : -1f;
                 midCant = cantSgn * Mathf.Atan(supelev) * Mathf.Rad2Deg;
                 interpMidCantComputed     = midCant;
@@ -607,7 +609,7 @@ namespace SizimityperMeshDeformer
             if (tan.sqrMagnitude < 1e-8f) tan = transform.forward;
             tan.Normalize();
 
-            Quaternion cantRot = Quaternion.AngleAxis(cantDeg, tan);
+            Quaternion cantRot = Quaternion.AngleAxis(invertCant ? -cantDeg : cantDeg, tan);
             Vector3 up    = cantRot * Vector3.up;
             Vector3 right = Vector3.Cross(tan, up).normalized;
             up = Vector3.Cross(right, tan).normalized;
@@ -664,17 +666,12 @@ namespace SizimityperMeshDeformer
         // Mesh Deformation
         // ============================================================
 
-        public List<Mesh> DeformAllMeshes()
+        // 全ソースメッシュの軸方向バウンズを返す。メッシュが無い場合は false を返す
+        public bool GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)
         {
-            var result = new List<Mesh>();
-            if (sourceMeshEntries == null || sourceMeshEntries.Count == 0) return result;
-
-            arcLengthLUT = null;
-            BuildArcLengthLUT();
-            if (totalArcLength <= 0f) return result;
-
-            // Pre-pass: shared axis bounds across ALL meshes so every mesh uses identical tile length
-            float sharedMin = float.MaxValue, sharedMax = float.MinValue;
+            sharedMin = float.MaxValue;
+            sharedMax = float.MinValue;
+            if (sourceMeshEntries == null) return false;
             foreach (var entry in sourceMeshEntries)
             {
                 if (entry.mesh == null) continue;
@@ -685,6 +682,20 @@ namespace SizimityperMeshDeformer
                     if (a > sharedMax) sharedMax = a;
                 }
             }
+            return sharedMax > sharedMin;
+        }
+
+        public List<Mesh> DeformAllMeshes()
+        {
+            var result = new List<Mesh>();
+            if (sourceMeshEntries == null || sourceMeshEntries.Count == 0) return result;
+
+            arcLengthLUT = null;
+            BuildArcLengthLUT();
+            if (totalArcLength <= 0f) return result;
+
+            // Pre-pass: shared axis bounds across ALL meshes so every mesh uses identical tile length
+            if (!GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)) return result;
 
             foreach (var entry in sourceMeshEntries)
             {
@@ -1033,6 +1044,23 @@ namespace SizimityperMeshDeformer
         // Prefab Placement
         // ============================================================
 
+        // 1ルール分のs値リストを計算（ビジュアライズ共有用）
+        public List<float> GetPlacementSValues(PrefabPlacementRule rule)
+        {
+            var sValues = new List<float>();
+            if (arcLengthLUT == null) BuildArcLengthLUT();
+
+            if (!GetSourceMeshAxisBounds(out float bMin, out float bMax)) return sValues;
+            float sourceMeshLen = bMax - bMin;
+            if (sourceMeshLen <= 0f) return sValues;
+
+            int tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / sourceMeshLen));
+            for (int tile = 0; tile < tileCount; tile++)
+                sValues.Add(tile * sourceMeshLen);
+
+            return sValues;
+        }
+
         public void UpdatePrefabPlacements()
         {
             ClearSpawnedPrefabs();
@@ -1041,15 +1069,23 @@ namespace SizimityperMeshDeformer
 
             foreach (var rule in placementRules)
             {
-                if (rule.prefab == null || rule.intervalM <= 0f) continue;
-                for (float s = 0f; s <= totalArcLength + 1e-4f; s += rule.intervalM)
+                if (rule.prefab == null) continue;
+
+                var sValues = GetPlacementSValues(rule);
+
+                foreach (float s in sValues)
                 {
-                    float cant = GetCantAtS(s);
-                    SplinePoint sp = EvaluateAtArcLength(s, cant);
-                    Vector3    pos = sp.position + sp.binormal * rule.offsetRight + sp.normal * rule.offsetUp;
+                    // 前後オフセットはs値をずらしてからスプラインを再評価（tangent近似ではなく正確なカーブ追従）
+                    float sEff = Mathf.Clamp(s + rule.positionOffset.z, 0f, totalArcLength);
+                    float cant = GetCantAtS(sEff);
+                    SplinePoint sp = EvaluateAtArcLength(sEff, cant);
+                    Vector3    pos = sp.position
+                        + sp.binormal * rule.positionOffset.x
+                        + sp.normal   * rule.positionOffset.y;
                     Quaternion rot = rule.followCant
                         ? Quaternion.LookRotation(sp.tangent, sp.normal)
                         : Quaternion.LookRotation(sp.tangent, Vector3.up);
+                    rot = rot * Quaternion.Euler(rule.rotationOffset);
 #if UNITY_EDITOR
                     var go = UnityEditor.PrefabUtility.InstantiatePrefab(rule.prefab, transform) as GameObject;
                     if (go != null)
