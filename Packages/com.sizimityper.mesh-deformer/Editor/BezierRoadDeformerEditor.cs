@@ -230,9 +230,8 @@ public class BezierRoadDeformerEditor : Editor
             if (r == null) continue;
             h = h * 31 + (r.prefab != null ? r.prefab.GetHashCode() : 0);
             h = h * 31 + r.intervalM.GetHashCode();
-            h = h * 31 + r.offsetRight.GetHashCode();
-            h = h * 31 + r.offsetUp.GetHashCode();
-            h = h * 31 + r.offsetForward.GetHashCode();
+            h = h * 31 + r.positionOffset.GetHashCode();
+            h = h * 31 + r.rotationOffset.GetHashCode();
             h = h * 31 + r.followCant.GetHashCode();
         }
         return h;
@@ -643,12 +642,11 @@ public class BezierRoadDeformerEditor : Editor
             EditorGUI.indentLevel++;
 
             EditorGUI.BeginChangeCheck();
-            rule.prefab         = (GameObject)EditorGUILayout.ObjectField("プレハブ",       rule.prefab,      typeof(GameObject), false);
-            rule.intervalM      = EditorGUILayout.FloatField("間隔 m",          rule.intervalM);
-            rule.offsetRight    = EditorGUILayout.FloatField("右オフセット m",   rule.offsetRight);
-            rule.offsetUp       = EditorGUILayout.FloatField("上オフセット m",   rule.offsetUp);
-            rule.offsetForward  = EditorGUILayout.FloatField("奥オフセット m",   rule.offsetForward);
-            rule.followCant     = EditorGUILayout.Toggle("カント追従",            rule.followCant);
+            rule.prefab          = (GameObject)EditorGUILayout.ObjectField("プレハブ", rule.prefab, typeof(GameObject), false);
+            rule.intervalM       = EditorGUILayout.FloatField("間隔 m",           rule.intervalM);
+            rule.positionOffset  = EditorGUILayout.Vector3Field("位置オフセット (右/上/奥)", rule.positionOffset);
+            rule.rotationOffset  = EditorGUILayout.Vector3Field("回転オフセット (X/Y/Z)",   rule.rotationOffset);
+            rule.followCant      = EditorGUILayout.Toggle("カント追従",            rule.followCant);
             if (EditorGUI.EndChangeCheck()) EditorUtility.SetDirty(_target);
 
             EditorGUI.indentLevel--;
