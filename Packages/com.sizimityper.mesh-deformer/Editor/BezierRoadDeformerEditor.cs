@@ -230,6 +230,7 @@ public class BezierRoadDeformerEditor : Editor
             if (r == null) continue;
             h = h * 31 + (r.prefab != null ? r.prefab.GetHashCode() : 0);
             h = h * 31 + r.intervalM.GetHashCode();
+            h = h * 31 + r.autoInterval.GetHashCode();
             h = h * 31 + r.positionOffset.GetHashCode();
             h = h * 31 + r.rotationOffset.GetHashCode();
             h = h * 31 + r.followCant.GetHashCode();
@@ -643,7 +644,9 @@ public class BezierRoadDeformerEditor : Editor
 
             EditorGUI.BeginChangeCheck();
             rule.prefab          = (GameObject)EditorGUILayout.ObjectField("プレハブ", rule.prefab, typeof(GameObject), false);
-            rule.intervalM       = EditorGUILayout.FloatField("間隔 m",           rule.intervalM);
+            rule.autoInterval    = EditorGUILayout.Toggle("メッシュ長に追従",      rule.autoInterval);
+            using (new EditorGUI.DisabledScope(rule.autoInterval))
+                rule.intervalM   = EditorGUILayout.FloatField("間隔 m",           rule.intervalM);
             EditorGUILayout.LabelField("位置オフセット m");
             EditorGUI.indentLevel++;
             rule.positionOffset = new Vector3(

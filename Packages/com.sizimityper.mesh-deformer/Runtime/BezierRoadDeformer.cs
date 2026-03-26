@@ -24,6 +24,7 @@ namespace SizimityperMeshDeformer
     {
         public GameObject prefab;
         public float   intervalM       = 20f;
+        public bool    autoInterval    = false;
         public Vector3 positionOffset  = Vector3.zero;
         public Vector3 rotationOffset  = Vector3.zero;
         public bool    followCant      = true;
@@ -1039,10 +1040,29 @@ namespace SizimityperMeshDeformer
             if (arcLengthLUT == null) BuildArcLengthLUT();
             if (placementRules == null) return;
 
+            // ソースメッシュの軸方向長さを計算（autoInterval用）
+            float sourceMeshLen = 0f;
+            if (sourceMeshEntries != null && sourceMeshEntries.Count > 0)
+            {
+                float sharedMin = float.MaxValue, sharedMax = float.MinValue;
+                foreach (var entry in sourceMeshEntries)
+                {
+                    if (entry.mesh == null) continue;
+                    foreach (var v in entry.mesh.vertices)
+                    {
+                        float a = GetAxisValue(v);
+                        if (a < sharedMin) sharedMin = a;
+                        if (a > sharedMax) sharedMax = a;
+                    }
+                }
+                if (sharedMax > sharedMin) sourceMeshLen = sharedMax - sharedMin;
+            }
+
             foreach (var rule in placementRules)
             {
-                if (rule.prefab == null || rule.intervalM <= 0f) continue;
-                for (float s = 0f; s <= totalArcLength + 1e-4f; s += rule.intervalM)
+                float interval = (rule.autoInterval && sourceMeshLen > 0f) ? sourceMeshLen : rule.intervalM;
+                if (rule.prefab == null || interval <= 0f) continue;
+                for (float s = 0f; s <= totalArcLength + 1e-4f; s += interval)
                 {
                     float cant = GetCantAtS(s);
                     SplinePoint sp = EvaluateAtArcLength(s, cant);
