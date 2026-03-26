@@ -665,17 +665,12 @@ namespace SizimityperMeshDeformer
         // Mesh Deformation
         // ============================================================
 
-        public List<Mesh> DeformAllMeshes()
+        // 全ソースメッシュの軸方向バウンズを返す。メッシュが無い場合は false を返す
+        private bool GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)
         {
-            var result = new List<Mesh>();
-            if (sourceMeshEntries == null || sourceMeshEntries.Count == 0) return result;
-
-            arcLengthLUT = null;
-            BuildArcLengthLUT();
-            if (totalArcLength <= 0f) return result;
-
-            // Pre-pass: shared axis bounds across ALL meshes so every mesh uses identical tile length
-            float sharedMin = float.MaxValue, sharedMax = float.MinValue;
+            sharedMin = float.MaxValue;
+            sharedMax = float.MinValue;
+            if (sourceMeshEntries == null) return false;
             foreach (var entry in sourceMeshEntries)
             {
                 if (entry.mesh == null) continue;
@@ -686,6 +681,20 @@ namespace SizimityperMeshDeformer
                     if (a > sharedMax) sharedMax = a;
                 }
             }
+            return sharedMax > sharedMin;
+        }
+
+        public List<Mesh> DeformAllMeshes()
+        {
+            var result = new List<Mesh>();
+            if (sourceMeshEntries == null || sourceMeshEntries.Count == 0) return result;
+
+            arcLengthLUT = null;
+            BuildArcLengthLUT();
+            if (totalArcLength <= 0f) return result;
+
+            // Pre-pass: shared axis bounds across ALL meshes so every mesh uses identical tile length
+            if (!GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)) return result;
 
             foreach (var entry in sourceMeshEntries)
             {
@@ -1040,23 +1049,10 @@ namespace SizimityperMeshDeformer
             if (arcLengthLUT == null) BuildArcLengthLUT();
             if (placementRules == null) return;
 
-            // ソースメッシュの軸方向長さを計算（autoInterval用）
+            // ソースメッシュの軸方向長さを計算（autoInterval用）— DeformAllMeshes と同じ計算
             float sourceMeshLen = 0f;
-            if (sourceMeshEntries != null && sourceMeshEntries.Count > 0)
-            {
-                float sharedMin = float.MaxValue, sharedMax = float.MinValue;
-                foreach (var entry in sourceMeshEntries)
-                {
-                    if (entry.mesh == null) continue;
-                    foreach (var v in entry.mesh.vertices)
-                    {
-                        float a = GetAxisValue(v);
-                        if (a < sharedMin) sharedMin = a;
-                        if (a > sharedMax) sharedMax = a;
-                    }
-                }
-                if (sharedMax > sharedMin) sourceMeshLen = sharedMax - sharedMin;
-            }
+            if (GetSourceMeshAxisBounds(out float meshBoundsMin, out float meshBoundsMax))
+                sourceMeshLen = meshBoundsMax - meshBoundsMin;
 
             foreach (var rule in placementRules)
             {
