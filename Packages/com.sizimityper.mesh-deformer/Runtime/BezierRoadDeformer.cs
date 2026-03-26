@@ -1056,9 +1056,30 @@ namespace SizimityperMeshDeformer
 
             foreach (var rule in placementRules)
             {
-                float interval = (rule.autoInterval && sourceMeshLen > 0f) ? sourceMeshLen : rule.intervalM;
-                if (rule.prefab == null || interval <= 0f) continue;
-                for (float s = 0f; s <= totalArcLength + 1e-4f; s += interval)
+                if (rule.prefab == null) continue;
+
+                // s値のリストを生成
+                // autoInterval時: DeformStretch/Cutと同じタイル割りで、メッシュ原点(axisVal=0)に合わせて配置
+                // 手動時: 0から固定間隔で配置
+                var sValues = new List<float>();
+                if (rule.autoInterval && sourceMeshLen > 0f)
+                {
+                    int tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / sourceMeshLen));
+                    for (int tile = 0; tile < tileCount; tile++)
+                    {
+                        float s = tile * sourceMeshLen - meshBoundsMin;
+                        if (s >= 0f && s <= totalArcLength + 1e-4f)
+                            sValues.Add(s);
+                    }
+                }
+                else
+                {
+                    if (rule.intervalM <= 0f) continue;
+                    for (float s = 0f; s <= totalArcLength + 1e-4f; s += rule.intervalM)
+                        sValues.Add(s);
+                }
+
+                foreach (float s in sValues)
                 {
                     float cant = GetCantAtS(s);
                     SplinePoint sp = EvaluateAtArcLength(s, cant);
