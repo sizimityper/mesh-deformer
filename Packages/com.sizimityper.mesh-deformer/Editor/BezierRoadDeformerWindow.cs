@@ -789,8 +789,20 @@ public class BezierRoadDeformerWindow : EditorWindow
             EditorGUI.BeginChangeCheck();
             rule.prefab          = (GameObject)EditorGUILayout.ObjectField("プレハブ", rule.prefab, typeof(GameObject), false);
             rule.intervalM       = EditorGUILayout.FloatField("間隔 m",           rule.intervalM);
-            rule.positionOffset  = EditorGUILayout.Vector3Field("位置オフセット (左右/上下/前後)", rule.positionOffset);
-            rule.rotationOffset  = EditorGUILayout.Vector3Field("回転オフセット (左右/上下/前後)", rule.rotationOffset);
+            EditorGUILayout.LabelField("位置オフセット m");
+            EditorGUI.indentLevel++;
+            rule.positionOffset = new Vector3(
+                EditorGUILayout.FloatField("左右", rule.positionOffset.x),
+                EditorGUILayout.FloatField("上下", rule.positionOffset.y),
+                EditorGUILayout.FloatField("前後", rule.positionOffset.z));
+            EditorGUI.indentLevel--;
+            EditorGUILayout.LabelField("回転オフセット °");
+            EditorGUI.indentLevel++;
+            rule.rotationOffset = new Vector3(
+                EditorGUILayout.FloatField("左右軸", rule.rotationOffset.x),
+                EditorGUILayout.FloatField("上下軸", rule.rotationOffset.y),
+                EditorGUILayout.FloatField("前後軸", rule.rotationOffset.z));
+            EditorGUI.indentLevel--;
             rule.followCant      = EditorGUILayout.Toggle("カント追従",            rule.followCant);
             if (EditorGUI.EndChangeCheck()) EditorUtility.SetDirty(_target);
 
