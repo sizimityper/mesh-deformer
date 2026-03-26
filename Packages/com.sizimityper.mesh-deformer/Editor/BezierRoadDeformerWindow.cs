@@ -252,6 +252,7 @@ public class BezierRoadDeformerWindow : EditorWindow
             h = h * 31 + r.intervalM.GetHashCode();
             h = h * 31 + r.offsetRight.GetHashCode();
             h = h * 31 + r.offsetUp.GetHashCode();
+            h = h * 31 + r.offsetForward.GetHashCode();
             h = h * 31 + r.followCant.GetHashCode();
         }
         return h;
@@ -787,11 +788,12 @@ public class BezierRoadDeformerWindow : EditorWindow
             EditorGUI.indentLevel++;
 
             EditorGUI.BeginChangeCheck();
-            rule.prefab      = (GameObject)EditorGUILayout.ObjectField("プレハブ",     rule.prefab,      typeof(GameObject), false);
-            rule.intervalM   = EditorGUILayout.FloatField("間隔 m",        rule.intervalM);
-            rule.offsetRight = EditorGUILayout.FloatField("右オフセット m", rule.offsetRight);
-            rule.offsetUp    = EditorGUILayout.FloatField("上オフセット m", rule.offsetUp);
-            rule.followCant  = EditorGUILayout.Toggle("カント追従",          rule.followCant);
+            rule.prefab         = (GameObject)EditorGUILayout.ObjectField("プレハブ",     rule.prefab,      typeof(GameObject), false);
+            rule.intervalM      = EditorGUILayout.FloatField("間隔 m",        rule.intervalM);
+            rule.offsetRight    = EditorGUILayout.FloatField("右オフセット m", rule.offsetRight);
+            rule.offsetUp       = EditorGUILayout.FloatField("上オフセット m", rule.offsetUp);
+            rule.offsetForward  = EditorGUILayout.FloatField("奥オフセット m", rule.offsetForward);
+            rule.followCant     = EditorGUILayout.Toggle("カント追従",          rule.followCant);
             if (EditorGUI.EndChangeCheck()) EditorUtility.SetDirty(_target);
 
             EditorGUI.indentLevel--;

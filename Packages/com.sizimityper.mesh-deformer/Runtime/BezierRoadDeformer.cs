@@ -23,10 +23,11 @@ namespace SizimityperMeshDeformer
     public class PrefabPlacementRule
     {
         public GameObject prefab;
-        public float intervalM   = 20f;
-        public float offsetRight = 0f;
-        public float offsetUp    = 0f;
-        public bool  followCant  = true;
+        public float intervalM     = 20f;
+        public float offsetRight   = 0f;
+        public float offsetUp      = 0f;
+        public float offsetForward = 0f;
+        public bool  followCant    = true;
     }
 
     [ExecuteInEditMode]
@@ -1046,7 +1047,7 @@ namespace SizimityperMeshDeformer
                 {
                     float cant = GetCantAtS(s);
                     SplinePoint sp = EvaluateAtArcLength(s, cant);
-                    Vector3    pos = sp.position + sp.binormal * rule.offsetRight + sp.normal * rule.offsetUp;
+                    Vector3    pos = sp.position + sp.binormal * rule.offsetRight + sp.normal * rule.offsetUp + sp.tangent * rule.offsetForward;
                     Quaternion rot = rule.followCant
                         ? Quaternion.LookRotation(sp.tangent, sp.normal)
                         : Quaternion.LookRotation(sp.tangent, Vector3.up);
