@@ -666,7 +666,7 @@ namespace SizimityperMeshDeformer
         // ============================================================
 
         // 全ソースメッシュの軸方向バウンズを返す。メッシュが無い場合は false を返す
-        private bool GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)
+        public bool GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)
         {
             sharedMin = float.MaxValue;
             sharedMax = float.MinValue;

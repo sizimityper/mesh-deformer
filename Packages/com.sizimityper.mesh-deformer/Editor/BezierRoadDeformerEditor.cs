@@ -881,9 +881,50 @@ public class BezierRoadDeformerEditor : Editor
 
     private void DrawPrefabPlacementGizmos()
     {
-        if (_target.placementRules == null || _target.placementRules.Count == 0) return;
         if (!_target.paramPointsBuilt) return;
 
+        // ---- スプライン中心線（白） ----
+        // EvaluateAtArcLength の sp.position がデフォームメッシュと一致するか確認用
+        {
+            const int STEPS = 80;
+            float total = _target.totalArcLength;
+            if (total > 0f)
+            {
+                var prev = _target.EvaluateAtArcLength(0f, _target.GetCantAtS(0f)).position;
+                Handles.color = new Color(1f, 1f, 1f, 0.5f);
+                for (int i = 1; i <= STEPS; i++)
+                {
+                    float s = total * i / STEPS;
+                    var cur = _target.EvaluateAtArcLength(s, _target.GetCantAtS(s)).position;
+                    Handles.DrawLine(prev, cur);
+                    prev = cur;
+                }
+            }
+        }
+
+        if (_target.placementRules == null || _target.placementRules.Count == 0) return;
+
+        // ---- タイル境界（シアン） ----
+        // s = 0, meshLen, 2*meshLen, ... にデフォームのタイルが並ぶ位置
+        if (_target.GetSourceMeshAxisBounds(out float bMin, out float bMax))
+        {
+            float meshLen = bMax - bMin;
+            if (meshLen > 0f)
+            {
+                int tileCount = Mathf.Max(1, Mathf.CeilToInt(_target.totalArcLength / meshLen));
+                Handles.color = Color.cyan;
+                for (int tile = 0; tile <= tileCount; tile++)
+                {
+                    float s = Mathf.Min(tile * meshLen, _target.totalArcLength);
+                    var sp = _target.EvaluateAtArcLength(s, _target.GetCantAtS(s));
+                    float sz = HandleUtility.GetHandleSize(sp.position) * 0.2f;
+                    Handles.DrawSolidDisc(sp.position, Camera.current.transform.forward, sz * 0.12f);
+                    Handles.DrawLine(sp.position - sp.binormal * sz, sp.position + sp.binormal * sz);
+                }
+            }
+        }
+
+        // ---- プレハブ配置位置と回転（黄・青・緑・赤） ----
         foreach (var rule in _target.placementRules)
         {
             if (rule.prefab == null) continue;
@@ -905,18 +946,14 @@ public class BezierRoadDeformerEditor : Editor
                     : Quaternion.LookRotation(sp.tangent, Vector3.up);
                 rot = rot * Quaternion.Euler(rule.rotationOffset);
 
-                float sz = HandleUtility.GetHandleSize(pos) * 0.3f;
+                float sz = HandleUtility.GetHandleSize(pos) * 0.35f;
 
-                // 前後（青）
                 Handles.color = Color.blue;
                 Handles.DrawLine(pos, pos + rot * Vector3.forward * sz);
-                // 上下（緑）
                 Handles.color = Color.green;
                 Handles.DrawLine(pos, pos + rot * Vector3.up * sz);
-                // 左右（赤）
                 Handles.color = Color.red;
                 Handles.DrawLine(pos, pos + rot * Vector3.right * sz);
-                // 中心点
                 Handles.color = Color.yellow;
                 Handles.DrawSolidDisc(pos, Camera.current.transform.forward, sz * 0.15f);
             }
