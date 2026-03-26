@@ -874,6 +874,53 @@ public class BezierRoadDeformerEditor : Editor
                 Handles.DrawLine(_target.interpEndObject.position, _target.interpEndObject.position + dir * sz * 3f);
             }
         }
+
+        // プレハブ配置のビジュアライズ
+        DrawPrefabPlacementGizmos();
+    }
+
+    private void DrawPrefabPlacementGizmos()
+    {
+        if (_target.placementRules == null || _target.placementRules.Count == 0) return;
+        if (!_target.paramPointsBuilt) return;
+
+        foreach (var rule in _target.placementRules)
+        {
+            if (rule.prefab == null) continue;
+
+            var sValues = _target.GetPlacementSValues(rule);
+
+            foreach (float s in sValues)
+            {
+                float cant = _target.GetCantAtS(s);
+                var sp = _target.EvaluateAtArcLength(s, cant);
+
+                Vector3 pos = sp.position
+                    + sp.binormal * rule.positionOffset.x
+                    + sp.normal   * rule.positionOffset.y
+                    + sp.tangent  * rule.positionOffset.z;
+
+                Quaternion rot = rule.followCant
+                    ? Quaternion.LookRotation(sp.tangent, sp.normal)
+                    : Quaternion.LookRotation(sp.tangent, Vector3.up);
+                rot = rot * Quaternion.Euler(rule.rotationOffset);
+
+                float sz = HandleUtility.GetHandleSize(pos) * 0.3f;
+
+                // 前後（青）
+                Handles.color = Color.blue;
+                Handles.DrawLine(pos, pos + rot * Vector3.forward * sz);
+                // 上下（緑）
+                Handles.color = Color.green;
+                Handles.DrawLine(pos, pos + rot * Vector3.up * sz);
+                // 左右（赤）
+                Handles.color = Color.red;
+                Handles.DrawLine(pos, pos + rot * Vector3.right * sz);
+                // 中心点
+                Handles.color = Color.yellow;
+                Handles.DrawSolidDisc(pos, Camera.current.transform.forward, sz * 0.15f);
+            }
+        }
     }
 
     // ============================================================

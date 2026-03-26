@@ -1043,41 +1043,50 @@ namespace SizimityperMeshDeformer
         // Prefab Placement
         // ============================================================
 
+        // 1ルール分のs値リストを計算（ビジュアライズ共有用）
+        public List<float> GetPlacementSValues(PrefabPlacementRule rule)
+        {
+            var sValues = new List<float>();
+            if (arcLengthLUT == null) BuildArcLengthLUT();
+
+            float sourceMeshLen = 0f;
+            float meshBoundsMin = 0f;
+            if (GetSourceMeshAxisBounds(out float bMin, out float bMax))
+            {
+                sourceMeshLen = bMax - bMin;
+                meshBoundsMin = bMin;
+            }
+
+            if (rule.autoInterval && sourceMeshLen > 0f)
+            {
+                int tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / sourceMeshLen));
+                for (int tile = 0; tile < tileCount; tile++)
+                {
+                    float s = tile * sourceMeshLen - meshBoundsMin;
+                    if (s >= 0f && s <= totalArcLength + 1e-4f)
+                        sValues.Add(s);
+                }
+            }
+            else
+            {
+                if (rule.intervalM > 0f)
+                    for (float s = 0f; s <= totalArcLength + 1e-4f; s += rule.intervalM)
+                        sValues.Add(s);
+            }
+            return sValues;
+        }
+
         public void UpdatePrefabPlacements()
         {
             ClearSpawnedPrefabs();
             if (arcLengthLUT == null) BuildArcLengthLUT();
             if (placementRules == null) return;
 
-            // ソースメッシュの軸方向長さを計算（autoInterval用）— DeformAllMeshes と同じ計算
-            float sourceMeshLen = 0f;
-            if (GetSourceMeshAxisBounds(out float meshBoundsMin, out float meshBoundsMax))
-                sourceMeshLen = meshBoundsMax - meshBoundsMin;
-
             foreach (var rule in placementRules)
             {
                 if (rule.prefab == null) continue;
 
-                // s値のリストを生成
-                // autoInterval時: DeformStretch/Cutと同じタイル割りで、メッシュ原点(axisVal=0)に合わせて配置
-                // 手動時: 0から固定間隔で配置
-                var sValues = new List<float>();
-                if (rule.autoInterval && sourceMeshLen > 0f)
-                {
-                    int tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / sourceMeshLen));
-                    for (int tile = 0; tile < tileCount; tile++)
-                    {
-                        float s = tile * sourceMeshLen - meshBoundsMin;
-                        if (s >= 0f && s <= totalArcLength + 1e-4f)
-                            sValues.Add(s);
-                    }
-                }
-                else
-                {
-                    if (rule.intervalM <= 0f) continue;
-                    for (float s = 0f; s <= totalArcLength + 1e-4f; s += rule.intervalM)
-                        sValues.Add(s);
-                }
+                var sValues = GetPlacementSValues(rule);
 
                 foreach (float s in sValues)
                 {
