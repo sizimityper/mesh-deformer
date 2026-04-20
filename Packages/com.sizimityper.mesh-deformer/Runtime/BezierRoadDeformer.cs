@@ -33,7 +33,7 @@ namespace SizimityperMeshDeformer
     public class BezierRoadDeformer : MonoBehaviour
     {
         // ============================================================
-        // Base
+        // ベース
         // ============================================================
         public GameObject   sourceParentObject;
         public AxisDirection axisDirection   = AxisDirection.Z;
@@ -43,23 +43,23 @@ namespace SizimityperMeshDeformer
         public List<SourceMeshEntry> sourceMeshEntries = new List<SourceMeshEntry>();
 
         // ============================================================
-        // Curve Mode
+        // カーブモード
         // ============================================================
         public CurveMode curveMode = CurveMode.Curve;
 
-        // --- Curve Mode ---
+        // --- カーブモード ---
         public float paramR              = 300f;
         public float paramAngle          = 90f;
         public bool  paramTurnRight      = true;
         public float paramCantAngle      = 0f;
-        public float paramGrade               = 0f;   // shared with Straight
-        public bool  paramGradeVerticalCurve = false; // true: sinusoidal grade (0→peak→0)
+        public float paramGrade               = 0f;   // Straightモードと共有
+        public bool  paramGradeVerticalCurve = false; // true: 正弦波勾配 (0→最大→0)
         public bool  paramUseEasement    = true;
         public float paramEasementLength = 50f;
-        public bool  paramCurveAutoGrade = false; // true: grade derived from height
-        public float paramCurveHeight    = 0f;    // target height (used when paramCurveAutoGrade)
+        public bool  paramCurveAutoGrade = false; // true: 高さから勾配を算出
+        public float paramCurveHeight    = 0f;    // 目標高さ（paramCurveAutoGrade使用時）
 
-        // Curve: auto-calculate from design speed
+        // カーブ: 設計速度から自動計算
         public bool  paramAutoCalcDesignSpeed = true;
         public float paramDesignSpeed         = 60f;
         public bool  paramAutoCalcFriction    = true;
@@ -69,7 +69,7 @@ namespace SizimityperMeshDeformer
         public bool  invertCant              = false;
         public bool  paramIgnoreCantLimit    = false;
 
-        // --- Interpolation Mode ---
+        // --- 補間モード ---
         public Transform   interpStartObject;
         public Transform   interpEndObject;
         public TangentAxis interpStartTangentAxis    = TangentAxis.PosZ;
@@ -86,26 +86,26 @@ namespace SizimityperMeshDeformer
         [HideInInspector] public float interpComputedR           = 0f;  // 表示用
         [HideInInspector] public float interpComputedDesignSpeed = 0f;  // 表示用
         [HideInInspector] public float interpComputedFriction    = 0f;  // 表示用
-        [HideInInspector] public Vector3 interpStartTangent = Vector3.forward; // legacy
-        [HideInInspector] public Vector3 interpEndTangent   = Vector3.forward; // legacy
+        [HideInInspector] public Vector3 interpStartTangent = Vector3.forward; // レガシー
+        [HideInInspector] public Vector3 interpEndTangent   = Vector3.forward; // レガシー
 
-        // --- Straight Mode ---
-        public float paramStraightLength    = 100f;  // uses paramGrade
-        public bool  paramStraightAutoGrade = false; // true: grade derived from height
-        public float paramStraightHeight    = 0f;    // target height (used when paramStraightAutoGrade)
+        // --- 直線モード ---
+        public float paramStraightLength    = 100f;  // paramGradeを使用
+        public bool  paramStraightAutoGrade = false; // true: 高さから勾配を算出
+        public float paramStraightHeight    = 0f;    // 目標高さ（paramStraightAutoGrade使用時）
 
         // ============================================================
-        // Deform Mode
+        // 変形モード
         // ============================================================
         public DeformMode deformMode    = DeformMode.Cut;
 
         // ============================================================
-        // Prefab Placement
+        // プレハブ配置
         // ============================================================
         public List<PrefabPlacementRule> placementRules = new List<PrefabPlacementRule>();
 
         // ============================================================
-        // Internal
+        // 内部
         // ============================================================
         [HideInInspector] public List<GameObject> spawnedPrefabs = new List<GameObject>();
 
@@ -114,11 +114,11 @@ namespace SizimityperMeshDeformer
         [HideInInspector] public float         totalArcLength;
         [HideInInspector] public List<Vector3> paramPoints;
         [HideInInspector] public List<Vector3> paramTangents;
-        [HideInInspector] public float[]       interpCantLUT;   // per-sample cant (Interpolation auto-cant)
+        [HideInInspector] public float[]       interpCantLUT;   // サンプルごとのカント（補間モード自動カント用）
         [HideInInspector] public bool          paramPointsBuilt = false;
 
         // ============================================================
-        // Initialize
+        // 初期化
         // ============================================================
 
         public void Initialize()
@@ -264,7 +264,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Spline Structures
+        // スプライン構造体
         // ============================================================
 
         public struct SplinePoint
@@ -277,7 +277,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Arc-Length LUT Construction
+        // 弧長LUT構築
         // ============================================================
 
         public void BuildArcLengthLUT()
@@ -308,7 +308,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Curve Mode: Clothoid + Circular Arc
+        // カーブモード: クロソイド＋円弧
         // ============================================================
 
         public void GenerateParameterCurve(int resolution = 200)
@@ -318,7 +318,7 @@ namespace SizimityperMeshDeformer
             float easLen        = paramUseEasement ? Mathf.Max(paramEasementLength, 0f) : 0f;
             float sign          = paramTurnRight ? 1f : -1f;
 
-            // Each easement section turns easLen/(2R)  (integral of linear curvature ramp)
+            // 各緩和区間は easLen/(2R) だけ方向変化する（線形曲率ランプの積分）
             float easAngle    = easLen > 0f ? easLen / (2f * R) : 0f;
             float arcAngleRad = Mathf.Max(0f, totalAngleRad - 2f * easAngle);
             float arcLen      = R * arcAngleRad;
@@ -368,7 +368,7 @@ namespace SizimityperMeshDeformer
 
             if (curveMode == CurveMode.Interpolation)
             {
-                // LUT is always built in GenerateInterpolationCurve
+                // LUTは GenerateInterpolationCurve で常に構築される
                 if (interpCantLUT != null && interpCantLUT.Length > 1
                     && arcLengthLUT != null && arcLengthLUT.Length == interpCantLUT.Length)
                 {
@@ -386,7 +386,7 @@ namespace SizimityperMeshDeformer
                 return 0f;
             }
 
-            // CurveMode.Curve
+            // CurveMode.Curve の場合
             float easLenC  = paramUseEasement ? paramEasementLength : 0f;
             float R        = Mathf.Max(paramR, 0.1f);
             float easAngle = easLenC > 0f ? easLenC / (2f * R) : 0f;
@@ -401,7 +401,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Interpolation Mode: Hermite Spline
+        // 補間モード: エルミートスプライン
         // ============================================================
 
         public Vector3 GetTangentDirection(Transform t, TangentAxis axis)
@@ -548,7 +548,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Straight Mode
+        // 直線モード
         // ============================================================
 
         private void GenerateStraightCurve(int resolution = 200)
@@ -565,7 +565,7 @@ namespace SizimityperMeshDeformer
                 float y, gs;
                 if (paramGradeVerticalCurve)
                 {
-                    // sinusoidal: g(s) = gradeSlope * sin(π*s/len), y(s) = gradeSlope*len/π*(1-cos(π*s/len))
+                    // 正弦波: g(s) = gradeSlope * sin(π*s/len), y(s) = gradeSlope*len/π*(1-cos(π*s/len))
                     y  = gradeSlope * len / Mathf.PI * (1f - Mathf.Cos(Mathf.PI * s / len));
                     gs = gradeSlope * Mathf.Sin(Mathf.PI * s / len);
                 }
@@ -581,7 +581,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Spline Evaluation
+        // スプライン評価
         // ============================================================
 
         public SplinePoint EvaluateAtArcLength(float s, float cantDeg = 0f)
@@ -624,7 +624,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Deformation Utilities
+        // 変形ユーティリティ
         // ============================================================
 
         private float GetAxisValue(Vector3 v)
@@ -663,7 +663,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Mesh Deformation
+        // メッシュ変形
         // ============================================================
 
         // 全ソースメッシュの軸方向バウンズを返す。メッシュが無い場合は false を返す
@@ -694,7 +694,7 @@ namespace SizimityperMeshDeformer
             BuildArcLengthLUT();
             if (totalArcLength <= 0f) return result;
 
-            // Pre-pass: shared axis bounds across ALL meshes so every mesh uses identical tile length
+            // 事前処理: 全メッシュで共通の軸方向バウンズを取得し、タイル長を統一する
             if (!GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)) return result;
 
             foreach (var entry in sourceMeshEntries)
@@ -734,7 +734,7 @@ namespace SizimityperMeshDeformer
             for (int tile = 0; tile < tileCount; tile++)
             {
                 float tileStartS = tile * meshLen;
-                // Last tile: clamp end to spline length → tileLen shrinks (stretch)
+                // 最終タイル: 終端をスプライン長にクランプ → tileLen が縮小（ストレッチ）
                 float tileEndS   = Mathf.Min(tileStartS + meshLen, totalArcLength);
                 float tileLen    = tileEndS - tileStartS;
                 int   baseIdx    = combinedVerts.Count;
@@ -777,7 +777,7 @@ namespace SizimityperMeshDeformer
                 }
             }
 
-            // Position weld at junctions (1 cm threshold)
+            // 接合部での位置ウェルド（1cm閾値）
             {
                 const float SNAP_SQ = 0.01f * 0.01f;
                 for (int tile = 0; tile < tileCount - 1; tile++)
@@ -849,7 +849,7 @@ namespace SizimityperMeshDeformer
             for (int tile = 0; tile < tileCount; tile++)
             {
                 float tileStartS = tile * meshLen;
-                float tileEndS   = tileStartS + meshLen;   // no clamping — always full tile
+                float tileEndS   = tileStartS + meshLen;   // クランプなし — 常にフルタイル
                 float tileLen    = meshLen;
                 int   baseIdx    = combinedVerts.Count;
 
@@ -885,7 +885,7 @@ namespace SizimityperMeshDeformer
                 tileStartVerts.Add(thisStarts);
                 tileEndVerts.Add(thisEnds);
 
-                // Precompute boundary SplinePoint once per tile
+                // 境界SplinePointをタイルごとに1回事前計算
                 float       boundaryCant = GetCantAtS(totalArcLength);
                 SplinePoint boundarySP   = EvaluateAtArcLength(totalArcLength, boundaryCant);
 
@@ -911,7 +911,7 @@ namespace SizimityperMeshDeformer
                             continue;
                         }
 
-                        // Sutherland-Hodgman clip against s <= totalArcLength
+                        // s <= totalArcLength に対するSutherland-Hodgmanクリップ
                         int[] polyIdx = { ia, ib, ic };
                         var   clipped = new List<int>(5);
                         for (int e = 0; e < 3; e++)
@@ -938,7 +938,7 @@ namespace SizimityperMeshDeformer
                                 clipped.Add(combinedVerts.Count - 1);
                             }
                         }
-                        // Fan triangulation
+                        // ファン三角形分割
                         for (int v = 1; v < clipped.Count - 1; v++)
                         {
                             subTriLists[sub].Add(clipped[0]);
@@ -949,7 +949,7 @@ namespace SizimityperMeshDeformer
                 }
             }
 
-            // Position weld at junctions (1 cm threshold)
+            // 接合部での位置ウェルド（1cm閾値）
             {
                 const float SNAP_SQ = 0.01f * 0.01f;
                 for (int tile = 0; tile < tileCount - 1; tile++)
@@ -991,7 +991,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Preview
+        // プレビュー
         // ============================================================
 
         public void UpdatePreview()
@@ -1041,7 +1041,7 @@ namespace SizimityperMeshDeformer
         }
 
         // ============================================================
-        // Prefab Placement
+        // プレハブ配置
         // ============================================================
 
         // 1ルール分のs値リストを計算（ビジュアライズ共有用）
