@@ -8,12 +8,12 @@ public class BezierRoadDeformerEditor : Editor
 {
     private BezierRoadDeformer _target;
 
-    // ---- 変更検出キャッシュ ----
+    // ---- Change Detection Cache ----
     private CurveMode  _prevCurveMode;
     private DeformMode _prevDeformMode;
     private float _prevTileAxisPadding;
 
-    // カーブモード
+    // Curve mode
     private float _prevParamR, _prevParamAngle, _prevParamCant, _prevParamGrade, _prevParamEaseLen;
     private bool  _prevTurnRight, _prevUseEasement, _prevGradeVerticalCurve;
     private float _prevDesignSpeed, _prevFrictionCoeff;
@@ -24,9 +24,9 @@ public class BezierRoadDeformerEditor : Editor
     // 規制速度表示ラベル
     private static readonly string[] REGULATED_SPEED_LABELS =
         { "20", "30", "40", "50", "60", "80", "100", "120" };
-    private bool  _prevInvertCant, _prevIgnoreCantLimit;
+    private bool  _prevInvertCant, _prevIgnoreCantLimit, _prevInvertNormals;
 
-    // 補間モード
+    // Interpolation mode
     private Transform   _prevInterpStart, _prevInterpEnd;
     private Vector3     _prevInterpStartPos, _prevInterpEndPos;
     private Quaternion  _prevInterpStartRot, _prevInterpEndRot;
@@ -39,12 +39,12 @@ public class BezierRoadDeformerEditor : Editor
     private float       _prevInterpStartTangentScale;
     private float       _prevInterpEndTangentScale;
 
-    // 直線モード
+    // Straight mode
     private float _prevStraightLength;
     private bool  _prevStraightAutoGrade;
     private float _prevStraightHeight;
 
-    // プレハブ配置
+    // Prefab placement
     private int _prevPlacementRulesHash;
 
     // ============================================================
@@ -62,7 +62,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // 変更検出
+    // Change Detection
     // ============================================================
 
     private void OnEditorUpdate()
@@ -149,6 +149,7 @@ public class BezierRoadDeformerEditor : Editor
     {
         if (_target.curveMode     != _prevCurveMode)     return true;
         if (_target.deformMode    != _prevDeformMode)    return true;
+        if (_target.invertNormals != _prevInvertNormals) return true;
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
         if (ComputePlacementRulesHash() != _prevPlacementRulesHash) return true;
         if (_target.invertCant           != _prevInvertCant)       return true;
@@ -207,7 +208,8 @@ public class BezierRoadDeformerEditor : Editor
     {
         if (_target == null) return;
         _prevCurveMode    = _target.curveMode;
-        _prevDeformMode   = _target.deformMode;
+        _prevDeformMode      = _target.deformMode;
+        _prevInvertNormals   = _target.invertNormals;
         _prevTileAxisPadding  = _target.tileAxisPadding;
 
         _prevParamR           = _target.paramR;
@@ -267,7 +269,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // インスペクターGUI
+    // Inspector GUI
     // ============================================================
 
     public override void OnInspectorGUI()
@@ -291,7 +293,7 @@ public class BezierRoadDeformerEditor : Editor
         serializedObject.ApplyModifiedProperties();
     }
 
-    // ---- ベースオブジェクト ----
+    // ---- Base Object ----------------------------------------
 
     private void DrawBaseObjectSection()
     {
@@ -324,7 +326,7 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUI.indentLevel--;
     }
 
-    // ---- カーブモード ----
+    // ---- Curve Mode -----------------------------------------
 
     private void DrawCurveModeSection()
     {
@@ -456,14 +458,14 @@ public class BezierRoadDeformerEditor : Editor
             EditorUtility.SetDirty(_target);
         }
 
-        // 摩擦係数の読み取り専用表示
+        // Readonly friction display
         if (_target.paramAutoCalcFriction)
         {
             using (new EditorGUI.DisabledGroupScope(true))
                 EditorGUILayout.FloatField("  横すべり摩擦係数 (算出)", _target.CalcFrictionFromSpeed(_target.paramDesignSpeed));
         }
 
-        // 緩和区間長
+        // Easement length
         EditorGUI.BeginChangeCheck();
         float displayEase = _target.paramAutoCalcEasement
             ? _target.CalcEasementLengthFromSpeed(_target.paramDesignSpeed)
@@ -487,7 +489,7 @@ public class BezierRoadDeformerEditor : Editor
         }
         else EditorGUI.EndChangeCheck();
 
-        // 自動計算値の同期
+        // Sync auto-calc values
         if (_target.paramAutoCalcEasement && _target.paramUseEasement)
         {
             float auto = _target.CalcEasementLengthFromSpeed(_target.paramDesignSpeed);
@@ -500,7 +502,7 @@ public class BezierRoadDeformerEditor : Editor
             }
         }
 
-        // カント角
+        // Cant angle
         float previewCant = _target.paramAutoApplyCant
             ? _target.CalcCantAngle()
             : _target.paramCantAngle;
@@ -684,7 +686,7 @@ public class BezierRoadDeformerEditor : Editor
         }
     }
 
-    // ---- 変形モード ----
+    // ---- Deform Mode ----------------------------------------
 
     private void DrawDeformModeSection()
     {
@@ -692,18 +694,20 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUI.indentLevel++;
 
         EditorGUI.BeginChangeCheck();
-        var newDeform = (DeformMode)EditorGUILayout.EnumPopup("端部処理", _target.deformMode);
+        var newDeform      = (DeformMode)EditorGUILayout.EnumPopup("端部処理",    _target.deformMode);
+        bool newInvertNorm = EditorGUILayout.Toggle("法線を反転",                  _target.invertNormals);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Deform Mode");
-            _target.deformMode = newDeform;
+            _target.deformMode     = newDeform;
+            _target.invertNormals  = newInvertNorm;
             EditorUtility.SetDirty(_target);
         }
 
         EditorGUI.indentLevel--;
     }
 
-    // ---- プレハブ配置 ----
+    // ---- Prefab Placement -----------------------------------
 
     private void DrawPrefabPlacementSection()
     {
@@ -763,13 +767,13 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUI.indentLevel--;
     }
 
-    // ---- アクションボタン ----
+    // ---- Action Buttons -------------------------------------
 
     private void DrawActionButtons()
     {
         bool isPreview = _target.IsPreviewActive();
 
-        // プレビュー切替
+        // Preview toggle
         var prevColor = GUI.backgroundColor;
         GUI.backgroundColor = isPreview ? new Color(0.4f, 1f, 0.4f) : Color.white;
         if (GUILayout.Button(isPreview ? "■ PREVIEW ON" : "□ PREVIEW OFF", GUILayout.Height(28)))
@@ -860,7 +864,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // ベイク
+    // Bake
     // ============================================================
 
     private void DoBake()
@@ -921,7 +925,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // シーンGUI（選択時のインタラクティブハンドル）
+    // Scene GUI（選択時のインタラクティブハンドル）
     // ============================================================
 
     private void OnSceneGUI()
@@ -929,7 +933,7 @@ public class BezierRoadDeformerEditor : Editor
         _target = (BezierRoadDeformer)target;
         if (_target == null) return;
 
-        // 補間モードの始点・終点ハンドル
+        // Interpolation モードの始点・終点ハンドル
         if (_target.curveMode == CurveMode.Interpolation)
         {
             if (_target.interpStartObject != null)
@@ -1036,7 +1040,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // ギズモ（選択状態に関係なく常に描画）
+    // Gizmo（選択状態に関係なく常に描画）
     // ============================================================
 
     [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected | GizmoType.InSelectionHierarchy)]
@@ -1107,13 +1111,4 @@ public class BezierRoadDeformerEditor : Editor
 
             Vector3 p0 = sp.position + sp.binormal * minR + sp.normal * minU; // 底・左
             Vector3 p1 = sp.position + sp.binormal * maxR + sp.normal * minU; // 底・右
-            Vector3 p2 = sp.position + sp.binormal * maxR + sp.normal * maxU; // 上・右
-            Vector3 p3 = sp.position + sp.binormal * minR + sp.normal * maxU; // 上・左
-
-            Gizmos.DrawLine(p0, p1);
-            Gizmos.DrawLine(p1, p2);
-            Gizmos.DrawLine(p2, p3);
-            Gizmos.DrawLine(p3, p0);
-        }
-    }
-}
+            Vector3 p2 = s
