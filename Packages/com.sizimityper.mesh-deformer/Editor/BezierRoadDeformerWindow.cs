@@ -892,4 +892,88 @@ public class BezierRoadDeformerWindow : EditorWindow
                 _target.placementRules.RemoveAt(i);
                 EditorUtility.SetDirty(_target);
                 EditorGUILayout.EndVertical();
-                ret
+                return;
+            }
+            EditorGUILayout.EndVertical();
+            EditorGUILayout.Space(2);
+        }
+
+        if (GUILayout.Button("+ ルール追加"))
+        {
+            Undo.RecordObject(_target, "Add Placement Rule");
+            _target.placementRules.Add(new PrefabPlacementRule());
+            EditorUtility.SetDirty(_target);
+        }
+
+        EditorGUI.indentLevel--;
+    }
+
+    // ---- Bake -----------------------------------------------
+
+    private void DrawBakeButton()
+    {
+        if (GUILayout.Button("Bake", GUILayout.Height(28)))
+            DoBake();
+    }
+
+    private void DoBake()
+    {
+        if (_target == null) return;
+
+        if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0)
+        {
+            if (_target.sourceParentObject != null)
+            {
+                _target.Initialize();
+                CacheAll();
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("Bake Error", "ソース親オブジェクトが設定されていません。", "OK");
+                return;
+            }
+        }
+
+        if (!ConfirmIfExcessiveTiles()) return;
+
+        Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake");
+
+        var meshes = _target.DeformAllMeshes();
+        for (int i = 0; i < _target.sourceMeshEntries.Count; i++)
+        {
+            var entry = _target.sourceMeshEntries[i];
+            var mesh  = i < meshes.Count ? meshes[i] : null;
+            if (mesh == null) continue;
+
+            GameObject go;
+            if (entry.outputObject != null)
+            {
+                go           = entry.outputObject;
+                go.hideFlags = HideFlags.None;
+            }
+            else
+            {
+                go = new GameObject(entry.meshName ?? $"Mesh_{i}");
+                go.transform.SetParent(_target.transform, false);
+            }
+
+            var mf = go.GetComponent<MeshFilter>() ?? go.AddComponent<MeshFilter>();
+            mf.sharedMesh = mesh;
+            var mr = go.GetComponent<MeshRenderer>() ?? go.AddComponent<MeshRenderer>();
+            if (entry.materials != null) mr.sharedMaterials = entry.materials;
+
+            go.hideFlags       = HideFlags.None;
+            entry.outputObject = null;
+            Undo.RegisterCreatedObjectUndo(go, "Bake");
+        }
+
+        _target.UpdatePrefabPlacements();
+        foreach (var go in _target.spawnedPrefabs)
+            if (go != null) go.hideFlags = HideFlags.None;
+        _target.spawnedPrefabs.Clear();
+
+        DestroyImmediate(_target);
+        _target = null;
+        Repaint();
+    }
+}
