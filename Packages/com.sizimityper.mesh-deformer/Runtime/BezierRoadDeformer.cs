@@ -10,6 +10,38 @@ namespace SizimityperMeshDeformer
     public enum TangentAxis  { PosZ, NegZ, PosX, NegX, PosY, NegY }
     public enum InterpTangentScaleMode { Manual, AngleBased, RadiusBased }
 
+    /// <summary>設計速度の決定方式</summary>
+    public enum DesignSpeedMode
+    {
+        /// <summary>曲線半径Rから線形補間で算出</summary>
+        AutoFromR,
+        /// <summary>Rから線形補間後、最近傍の規制速度にスナップ</summary>
+        AutoSnap,
+        /// <summary>規制速度 {20,30,40,50,60,80,100,120} km/h から選択</summary>
+        Regulated,
+        /// <summary>手動入力</summary>
+        Manual,
+    }
+
+    /// <summary>規制速度テーブル（国内高速・一般道共通）</summary>
+    public static class RegulatedSpeeds
+    {
+        public static readonly float[] Values = { 20f, 30f, 40f, 50f, 60f, 80f, 100f, 120f };
+
+        /// <summary>速度値から最近傍の規制速度インデックスを返す</summary>
+        public static int NearestIndex(float speedKmh)
+        {
+            int best = 0;
+            float bestDist = Mathf.Abs(Values[0] - speedKmh);
+            for (int i = 1; i < Values.Length; i++)
+            {
+                float d = Mathf.Abs(Values[i] - speedKmh);
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            return best;
+        }
+    }
+
     [Serializable]
     public class SourceMeshEntry
     {
@@ -60,8 +92,10 @@ namespace SizimityperMeshDeformer
         public float paramCurveHeight    = 0f;    // 目標高さ（paramCurveAutoGrade使用時）
 
         // カーブ: 設計速度から自動計算
-        public bool  paramAutoCalcDesignSpeed = true;
-        public float paramDesignSpeed         = 60f;
+        public DesignSpeedMode designSpeedMode          = DesignSpeedMode.AutoFromR;
+        public int             paramRegulatedSpeedIndex = 4; // 60 km/h
+        [HideInInspector] public bool paramAutoCalcDesignSpeed = true; // 旧フィールド（後方互換・非表示）
+        public float paramDesignSpeed = 60f;
         public bool  paramAutoCalcFriction    = true;
         public float paramFrictionCoeff       = 0.13f;
         public bool  paramAutoApplyCant       = true;
@@ -1092,7 +1126,7 @@ namespace SizimityperMeshDeformer
                     {
                         go.transform.position = pos;
                         go.transform.rotation = rot;
-                        go.hideFlags          = HideFlags.DontSave;
+                        go.hideFlags           = HideFlags.DontSave;
                         spawnedPrefabs.Add(go);
                     }
 #endif

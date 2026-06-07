@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "PowerShell($content = Get-Content \"C:\\\\Users\\\\sizimityper\\\\vpm\\\\mesh-deformer\\\\Packages\\\\com.sizimityper.mesh-deformer\\\\Editor\\\\BezierRoadDeformerEditor.cs\" -Encoding UTF8 | Select-Object -Index 25; [System.Text.Encoding]::UTF8.GetBytes\\($content\\) | ForEach-Object { \"{0:X2}\" -f $_ } | Join-String -Separator \" \")"
     ]
   }
 }

@@ -18,6 +18,12 @@ public class BezierRoadDeformerEditor : Editor
     private bool  _prevTurnRight, _prevUseEasement, _prevGradeVerticalCurve;
     private float _prevDesignSpeed, _prevFrictionCoeff;
     private bool  _prevAutoDesignSpeed, _prevAutoFriction, _prevAutoApplyCant, _prevAutoEasement;
+    private DesignSpeedMode _prevDesignSpeedMode;
+    private int             _prevRegulatedSpeedIndex;
+
+    // 規制速度表示ラベル
+    private static readonly string[] REGULATED_SPEED_LABELS =
+        { "20", "30", "40", "50", "60", "80", "100", "120" };
     private bool  _prevInvertCant, _prevIgnoreCantLimit;
 
     // 補間モード
@@ -64,10 +70,28 @@ public class BezierRoadDeformerEditor : Editor
         if (_target == null) return;
 
         // 自動計算はプレビュー状態によらず常に実行
-        if (_target.curveMode == CurveMode.Curve && _target.paramAutoCalcDesignSpeed)
+        if (_target.curveMode == CurveMode.Curve)
         {
-            float newSpeed = _target.CalcDesignSpeedFromR(_target.paramR);
-            if (!Mathf.Approximately(newSpeed, _target.paramDesignSpeed))
+            float newSpeed = _target.paramDesignSpeed;
+            switch (_target.designSpeedMode)
+            {
+                case DesignSpeedMode.AutoFromR:
+                    newSpeed = _target.CalcDesignSpeedFromR(_target.paramR);
+                    break;
+                case DesignSpeedMode.AutoSnap:
+                {
+                    float linear = _target.CalcDesignSpeedFromR(_target.paramR);
+                    int   idx    = RegulatedSpeeds.NearestIndex(linear);
+                    newSpeed = RegulatedSpeeds.Values[idx];
+                    break;
+                }
+                case DesignSpeedMode.Regulated:
+                    newSpeed = RegulatedSpeeds.Values[_target.paramRegulatedSpeedIndex];
+                    break;
+                // Manual: paramDesignSpeed はそのまま
+            }
+            if (!Mathf.Approximately(newSpeed, _target.paramDesignSpeed)
+                && _target.designSpeedMode != DesignSpeedMode.Manual)
             {
                 Undo.RecordObject(_target, "Auto Calc Design Speed");
                 _target.paramDesignSpeed = newSpeed;
@@ -141,8 +165,9 @@ public class BezierRoadDeformerEditor : Editor
                     || _target.paramGradeVerticalCurve != _prevGradeVerticalCurve
                     || _target.paramUseEasement    != _prevUseEasement
                     || _target.paramEasementLength != _prevParamEaseLen
-                    || _target.paramAutoCalcDesignSpeed != _prevAutoDesignSpeed
-                    || _target.paramDesignSpeed         != _prevDesignSpeed
+                    || _target.designSpeedMode           != _prevDesignSpeedMode
+                    || _target.paramRegulatedSpeedIndex  != _prevRegulatedSpeedIndex
+                    || _target.paramDesignSpeed          != _prevDesignSpeed
                     || _target.paramFrictionCoeff       != _prevFrictionCoeff
                     || _target.paramAutoCalcFriction    != _prevAutoFriction
                     || _target.paramAutoApplyCant       != _prevAutoApplyCant
@@ -193,8 +218,10 @@ public class BezierRoadDeformerEditor : Editor
         _prevGradeVerticalCurve = _target.paramGradeVerticalCurve;
         _prevUseEasement        = _target.paramUseEasement;
         _prevParamEaseLen       = _target.paramEasementLength;
-        _prevAutoDesignSpeed  = _target.paramAutoCalcDesignSpeed;
-        _prevDesignSpeed      = _target.paramDesignSpeed;
+        _prevAutoDesignSpeed      = _target.paramAutoCalcDesignSpeed; // 旧フィールド
+        _prevDesignSpeedMode      = _target.designSpeedMode;
+        _prevRegulatedSpeedIndex  = _target.paramRegulatedSpeedIndex;
+        _prevDesignSpeed          = _target.paramDesignSpeed;
         _prevFrictionCoeff    = _target.paramFrictionCoeff;
         _prevAutoFriction     = _target.paramAutoCalcFriction;
         _prevAutoApplyCant      = _target.paramAutoApplyCant;
@@ -374,18 +401,41 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUILayout.LabelField("  設計速度から自動計算", EditorStyles.miniLabel);
 
         EditorGUI.BeginChangeCheck();
-        bool  newAutoSpeed = EditorGUILayout.Toggle("設計速度をRから自動取得", _target.paramAutoCalcDesignSpeed);
-        float newSpeed;
-        if (_target.paramAutoCalcDesignSpeed)
+        var   newSpeedMode = (DesignSpeedMode)EditorGUILayout.EnumPopup("設計速度モード", _target.designSpeedMode);
+        float newSpeed     = _target.paramDesignSpeed;
+        int   newRegIdx    = _target.paramRegulatedSpeedIndex;
+        switch (newSpeedMode)
         {
-            float autoSpeed = _target.CalcDesignSpeedFromR(_target.paramR);
-            using (new EditorGUI.DisabledGroupScope(true))
-                EditorGUILayout.FloatField("  設計速度 (算出) km/h", autoSpeed);
-            newSpeed = autoSpeed;
-        }
-        else
-        {
-            newSpeed = EditorGUILayout.FloatField("設計速度 km/h", _target.paramDesignSpeed);
+            case DesignSpeedMode.AutoFromR:
+            {
+                float autoSpeed = _target.CalcDesignSpeedFromR(_target.paramR);
+                using (new EditorGUI.DisabledGroupScope(true))
+                    EditorGUILayout.FloatField("  設計速度 (算出) km/h", autoSpeed);
+                newSpeed = autoSpeed;
+                break;
+            }
+            case DesignSpeedMode.AutoSnap:
+            {
+                float linear  = _target.CalcDesignSpeedFromR(_target.paramR);
+                int   snapIdx = RegulatedSpeeds.NearestIndex(linear);
+                float snapped = RegulatedSpeeds.Values[snapIdx];
+                using (new EditorGUI.DisabledGroupScope(true))
+                {
+                    EditorGUILayout.FloatField("  補間値 km/h", linear);
+                    EditorGUILayout.FloatField("  スナップ後 km/h", snapped);
+                }
+                newSpeed = snapped;
+                break;
+            }
+            case DesignSpeedMode.Regulated:
+                newRegIdx = EditorGUILayout.Popup("規制速度", _target.paramRegulatedSpeedIndex, REGULATED_SPEED_LABELS);
+                newSpeed  = RegulatedSpeeds.Values[newRegIdx];
+                using (new EditorGUI.DisabledGroupScope(true))
+                    EditorGUILayout.FloatField("  設計速度 km/h", newSpeed);
+                break;
+            case DesignSpeedMode.Manual:
+                newSpeed = EditorGUILayout.FloatField("設計速度 km/h", _target.paramDesignSpeed);
+                break;
         }
         bool  newAutoFric  = EditorGUILayout.Toggle("摩擦係数を自動取得",    _target.paramAutoCalcFriction);
         float newFric      = _target.paramAutoCalcFriction
@@ -396,7 +446,8 @@ public class BezierRoadDeformerEditor : Editor
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Auto Calc");
-            _target.paramAutoCalcDesignSpeed = newAutoSpeed;
+            _target.designSpeedMode          = newSpeedMode;
+            _target.paramRegulatedSpeedIndex = newRegIdx;
             _target.paramDesignSpeed         = Mathf.Max(0f, newSpeed);
             _target.paramAutoCalcFriction    = newAutoFric;
             if (!newAutoFric) _target.paramFrictionCoeff = newFric;
@@ -762,7 +813,7 @@ public class BezierRoadDeformerEditor : Editor
         return 2f * easLen + R * arcAngleRad;
     }
 
-    private static readonly int TILE_WARN_THRESHOLD = 500;
+    private static readonly int TILE_WARN_THRESHOLD = 10000;
 
     /// <summary>タイル数が過大な場合に確認ダイアログを表示。続行するなら true を返す。</summary>
     private bool ConfirmIfExcessiveTiles()
