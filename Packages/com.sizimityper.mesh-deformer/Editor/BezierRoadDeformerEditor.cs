@@ -8,12 +8,12 @@ public class BezierRoadDeformerEditor : Editor
 {
     private BezierRoadDeformer _target;
 
-    // ---- Change Detection Cache ----
+    // ---- 変更検出キャッシュ ----
     private CurveMode  _prevCurveMode;
     private DeformMode _prevDeformMode;
     private float _prevTileAxisPadding;
 
-    // Curve mode
+    // カーブモード
     private float _prevParamR, _prevParamAngle, _prevParamCant, _prevParamGrade, _prevParamEaseLen;
     private bool  _prevTurnRight, _prevUseEasement, _prevGradeVerticalCurve;
     private float _prevDesignSpeed, _prevFrictionCoeff;
@@ -26,7 +26,7 @@ public class BezierRoadDeformerEditor : Editor
         { "20", "30", "40", "50", "60", "80", "100", "120" };
     private bool  _prevInvertCant, _prevIgnoreCantLimit;
 
-    // Interpolation mode
+    // 補間モード
     private Transform   _prevInterpStart, _prevInterpEnd;
     private Vector3     _prevInterpStartPos, _prevInterpEndPos;
     private Quaternion  _prevInterpStartRot, _prevInterpEndRot;
@@ -39,12 +39,12 @@ public class BezierRoadDeformerEditor : Editor
     private float       _prevInterpStartTangentScale;
     private float       _prevInterpEndTangentScale;
 
-    // Straight mode
+    // 直線モード
     private float _prevStraightLength;
     private bool  _prevStraightAutoGrade;
     private float _prevStraightHeight;
 
-    // Prefab placement
+    // プレハブ配置
     private int _prevPlacementRulesHash;
 
     // ============================================================
@@ -62,7 +62,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // Change Detection
+    // 変更検出
     // ============================================================
 
     private void OnEditorUpdate()
@@ -267,7 +267,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // Inspector GUI
+    // インスペクターGUI
     // ============================================================
 
     public override void OnInspectorGUI()
@@ -291,7 +291,7 @@ public class BezierRoadDeformerEditor : Editor
         serializedObject.ApplyModifiedProperties();
     }
 
-    // ---- Base Object ----------------------------------------
+    // ---- ベースオブジェクト ----
 
     private void DrawBaseObjectSection()
     {
@@ -324,7 +324,7 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUI.indentLevel--;
     }
 
-    // ---- Curve Mode -----------------------------------------
+    // ---- カーブモード ----
 
     private void DrawCurveModeSection()
     {
@@ -456,14 +456,14 @@ public class BezierRoadDeformerEditor : Editor
             EditorUtility.SetDirty(_target);
         }
 
-        // Readonly friction display
+        // 摩擦係数の読み取り専用表示
         if (_target.paramAutoCalcFriction)
         {
             using (new EditorGUI.DisabledGroupScope(true))
                 EditorGUILayout.FloatField("  横すべり摩擦係数 (算出)", _target.CalcFrictionFromSpeed(_target.paramDesignSpeed));
         }
 
-        // Easement length
+        // 緩和区間長
         EditorGUI.BeginChangeCheck();
         float displayEase = _target.paramAutoCalcEasement
             ? _target.CalcEasementLengthFromSpeed(_target.paramDesignSpeed)
@@ -487,7 +487,7 @@ public class BezierRoadDeformerEditor : Editor
         }
         else EditorGUI.EndChangeCheck();
 
-        // Sync auto-calc values
+        // 自動計算値の同期
         if (_target.paramAutoCalcEasement && _target.paramUseEasement)
         {
             float auto = _target.CalcEasementLengthFromSpeed(_target.paramDesignSpeed);
@@ -500,7 +500,7 @@ public class BezierRoadDeformerEditor : Editor
             }
         }
 
-        // Cant angle
+        // カント角
         float previewCant = _target.paramAutoApplyCant
             ? _target.CalcCantAngle()
             : _target.paramCantAngle;
@@ -684,7 +684,7 @@ public class BezierRoadDeformerEditor : Editor
         }
     }
 
-    // ---- Deform Mode ----------------------------------------
+    // ---- 変形モード ----
 
     private void DrawDeformModeSection()
     {
@@ -703,7 +703,7 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUI.indentLevel--;
     }
 
-    // ---- Prefab Placement -----------------------------------
+    // ---- プレハブ配置 ----
 
     private void DrawPrefabPlacementSection()
     {
@@ -763,13 +763,13 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUI.indentLevel--;
     }
 
-    // ---- Action Buttons -------------------------------------
+    // ---- アクションボタン ----
 
     private void DrawActionButtons()
     {
         bool isPreview = _target.IsPreviewActive();
 
-        // Preview toggle
+        // プレビュー切替
         var prevColor = GUI.backgroundColor;
         GUI.backgroundColor = isPreview ? new Color(0.4f, 1f, 0.4f) : Color.white;
         if (GUILayout.Button(isPreview ? "■ PREVIEW ON" : "□ PREVIEW OFF", GUILayout.Height(28)))
@@ -860,7 +860,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // Bake
+    // ベイク
     // ============================================================
 
     private void DoBake()
@@ -921,7 +921,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // Scene GUI（選択時のインタラクティブハンドル）
+    // シーンGUI（選択時のインタラクティブハンドル）
     // ============================================================
 
     private void OnSceneGUI()
@@ -929,7 +929,7 @@ public class BezierRoadDeformerEditor : Editor
         _target = (BezierRoadDeformer)target;
         if (_target == null) return;
 
-        // Interpolation モードの始点・終点ハンドル
+        // 補間モードの始点・終点ハンドル
         if (_target.curveMode == CurveMode.Interpolation)
         {
             if (_target.interpStartObject != null)
@@ -1036,7 +1036,7 @@ public class BezierRoadDeformerEditor : Editor
     }
 
     // ============================================================
-    // Gizmo（選択状態に関係なく常に描画）
+    // ギズモ（選択状態に関係なく常に描画）
     // ============================================================
 
     [DrawGizmo(GizmoType.Selected | GizmoType.NonSelected | GizmoType.InSelectionHierarchy)]

@@ -11,7 +11,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     private BezierRoadDeformer _target;
     private Vector2 _scroll;
 
-    // ---- Change Detection Cache ----
+    // ---- 変更検出キャッシュ ----
     private CurveMode  _prevCurveMode;
     private DeformMode _prevDeformMode;
     private float      _prevTileAxisPadding;
@@ -44,7 +44,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     private bool  _prevStraightAutoGrade;
     private float _prevStraightHeight;
 
-    // Prefab placement
+    // プレハブ配置
     private int _prevPlacementRulesHash;
 
     // ============================================================
@@ -87,7 +87,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     }
 
     // ============================================================
-    // Change Detection + Auto-Update
+    // 変更検出 + 自動更新
     // ============================================================
 
     private void OnEditorUpdate()
@@ -295,7 +295,7 @@ public class BezierRoadDeformerWindow : EditorWindow
 
     void OnGUI()
     {
-        // Header: target selector
+        // ヘッダー: ターゲット選択
         DrawHeader();
 
         if (_target == null)
@@ -304,7 +304,7 @@ public class BezierRoadDeformerWindow : EditorWindow
             return;
         }
 
-        // Preview indicator
+        // プレビューインジケーター
         DrawPreviewToggle();
         EditorGUILayout.Space(4);
 
@@ -321,7 +321,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUILayout.EndScrollView();
     }
 
-    // ---- No Target UI ---------------------------------------
+    // ---- ターゲット未設定UI ----
 
     private void DrawNoTargetUI()
     {
@@ -357,7 +357,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         }
     }
 
-    // ---- Header ---------------------------------------------
+    // ---- ヘッダー ----
 
     private void DrawHeader()
     {
@@ -374,7 +374,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUILayout.Space(4);
     }
 
-    // ---- Preview Toggle -------------------------------------
+    // ---- プレビュー切替 ----
 
     private void DrawPreviewToggle()
     {
@@ -468,7 +468,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         return max;
     }
 
-    // ---- Base Object ----------------------------------------
+    // ---- ベースオブジェクト ----
 
     private void DrawBaseObjectSection()
     {
@@ -501,7 +501,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel--;
     }
 
-    // ---- Curve Mode -----------------------------------------
+    // ---- カーブモード ----
 
     private void DrawCurveModeSection()
     {
@@ -627,7 +627,7 @@ public class BezierRoadDeformerWindow : EditorWindow
             EditorUtility.SetDirty(_target);
         }
 
-        // Readonly displays
+        // 読み取り専用表示
         using (new EditorGUI.DisabledGroupScope(true))
         {
             if (_target.paramAutoCalcFriction)
@@ -830,7 +830,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         return 2f * easLen + R * arcAngleRad;
     }
 
-    // ---- Deform Mode ----------------------------------------
+    // ---- 変形モード ----
 
     private void DrawDeformModeSection()
     {
@@ -849,7 +849,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel--;
     }
 
-    // ---- Prefab Placement -----------------------------------
+    // ---- プレハブ配置 ----
 
     private void DrawPrefabPlacementSection()
     {
@@ -908,7 +908,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel--;
     }
 
-    // ---- Bake -----------------------------------------------
+    // ---- ベイク ----
 
     private void DrawBakeButton()
     {
