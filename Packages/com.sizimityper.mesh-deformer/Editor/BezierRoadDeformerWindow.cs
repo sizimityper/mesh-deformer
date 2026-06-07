@@ -25,7 +25,7 @@ public class BezierRoadDeformerWindow : EditorWindow
 
     // 規制速度表示ラベル
     private static readonly string[] REGULATED_SPEED_LABELS =
-        { "20 km/h", "30 km/h", "40 km/h", "50 km/h", "60 km/h", "80 km/h", "100 km/h", "120 km/h" };
+        { "20", "30", "40", "50", "60", "80", "100", "120" };
     private bool  _prevInvertCant, _prevIgnoreCantLimit;
 
     private Transform   _prevInterpStart, _prevInterpEnd;
