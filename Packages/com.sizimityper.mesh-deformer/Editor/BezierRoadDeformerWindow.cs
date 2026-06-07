@@ -11,7 +11,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     private BezierRoadDeformer _target;
     private Vector2 _scroll;
 
-    // ---- 変更検出キャッシュ ----
+    // ---- Change Detection Cache ----
     private CurveMode  _prevCurveMode;
     private DeformMode _prevDeformMode;
     private float      _prevTileAxisPadding;
@@ -26,7 +26,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     // 規制速度表示ラベル
     private static readonly string[] REGULATED_SPEED_LABELS =
         { "20", "30", "40", "50", "60", "80", "100", "120" };
-    private bool  _prevInvertCant, _prevIgnoreCantLimit;
+    private bool  _prevInvertCant, _prevIgnoreCantLimit, _prevInvertNormals;
 
     private Transform   _prevInterpStart, _prevInterpEnd;
     private Vector3     _prevInterpStartPos, _prevInterpEndPos;
@@ -44,7 +44,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     private bool  _prevStraightAutoGrade;
     private float _prevStraightHeight;
 
-    // プレハブ配置
+    // Prefab placement
     private int _prevPlacementRulesHash;
 
     // ============================================================
@@ -87,7 +87,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     }
 
     // ============================================================
-    // 変更検出 + 自動更新
+    // Change Detection + Auto-Update
     // ============================================================
 
     private void OnEditorUpdate()
@@ -178,6 +178,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
         if (ComputePlacementRulesHash() != _prevPlacementRulesHash) return true;
         if (_target.invertCant           != _prevInvertCant)       return true;
+        if (_target.invertNormals        != _prevInvertNormals)    return true;
         if (_target.paramIgnoreCantLimit != _prevIgnoreCantLimit)  return true;
 
         switch (_target.curveMode)
@@ -234,6 +235,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         if (_target == null) return;
         _prevCurveMode       = _target.curveMode;
         _prevDeformMode      = _target.deformMode;
+        _prevInvertNormals   = _target.invertNormals;
         _prevTileAxisPadding = _target.tileAxisPadding;
         _prevParamR           = _target.paramR;
         _prevParamAngle       = _target.paramAngle;
@@ -295,7 +297,7 @@ public class BezierRoadDeformerWindow : EditorWindow
 
     void OnGUI()
     {
-        // ヘッダー: ターゲット選択
+        // Header: target selector
         DrawHeader();
 
         if (_target == null)
@@ -304,7 +306,7 @@ public class BezierRoadDeformerWindow : EditorWindow
             return;
         }
 
-        // プレビューインジケーター
+        // Preview indicator
         DrawPreviewToggle();
         EditorGUILayout.Space(4);
 
@@ -321,7 +323,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUILayout.EndScrollView();
     }
 
-    // ---- ターゲット未設定UI ----
+    // ---- No Target UI ---------------------------------------
 
     private void DrawNoTargetUI()
     {
@@ -357,7 +359,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         }
     }
 
-    // ---- ヘッダー ----
+    // ---- Header ---------------------------------------------
 
     private void DrawHeader()
     {
@@ -374,7 +376,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUILayout.Space(4);
     }
 
-    // ---- プレビュー切替 ----
+    // ---- Preview Toggle -------------------------------------
 
     private void DrawPreviewToggle()
     {
@@ -468,7 +470,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         return max;
     }
 
-    // ---- ベースオブジェクト ----
+    // ---- Base Object ----------------------------------------
 
     private void DrawBaseObjectSection()
     {
@@ -501,7 +503,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel--;
     }
 
-    // ---- カーブモード ----
+    // ---- Curve Mode -----------------------------------------
 
     private void DrawCurveModeSection()
     {
@@ -627,7 +629,7 @@ public class BezierRoadDeformerWindow : EditorWindow
             EditorUtility.SetDirty(_target);
         }
 
-        // 読み取り専用表示
+        // Readonly displays
         using (new EditorGUI.DisabledGroupScope(true))
         {
             if (_target.paramAutoCalcFriction)
@@ -830,7 +832,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         return 2f * easLen + R * arcAngleRad;
     }
 
-    // ---- 変形モード ----
+    // ---- Deform Mode ----------------------------------------
 
     private void DrawDeformModeSection()
     {
@@ -838,18 +840,20 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel++;
 
         EditorGUI.BeginChangeCheck();
-        var newDeform = (DeformMode)EditorGUILayout.EnumPopup("端部処理", _target.deformMode);
+        var newDeform      = (DeformMode)EditorGUILayout.EnumPopup("端部処理",    _target.deformMode);
+        bool newInvertNorm = EditorGUILayout.Toggle("法線を反転",                  _target.invertNormals);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Deform Mode");
-            _target.deformMode = newDeform;
+            _target.deformMode     = newDeform;
+            _target.invertNormals  = newInvertNorm;
             EditorUtility.SetDirty(_target);
         }
 
         EditorGUI.indentLevel--;
     }
 
-    // ---- プレハブ配置 ----
+    // ---- Prefab Placement -----------------------------------
 
     private void DrawPrefabPlacementSection()
     {
@@ -908,7 +912,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel--;
     }
 
-    // ---- ベイク ----
+    // ---- Bake -----------------------------------------------
 
     private void DrawBakeButton()
     {
@@ -964,16 +968,4 @@ public class BezierRoadDeformerWindow : EditorWindow
 
             go.hideFlags       = HideFlags.None;
             entry.outputObject = null;
-            Undo.RegisterCreatedObjectUndo(go, "Bake");
-        }
-
-        _target.UpdatePrefabPlacements();
-        foreach (var go in _target.spawnedPrefabs)
-            if (go != null) go.hideFlags = HideFlags.None;
-        _target.spawnedPrefabs.Clear();
-
-        DestroyImmediate(_target);
-        _target = null;
-        Repaint();
-    }
-}
+            Undo
