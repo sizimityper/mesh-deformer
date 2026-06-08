@@ -26,7 +26,7 @@ public class BezierRoadDeformerWindow : EditorWindow
     // 規制速度表示ラベル
     private static readonly string[] REGULATED_SPEED_LABELS =
         { "20", "30", "40", "50", "60", "80", "100", "120" };
-    private bool  _prevInvertCant, _prevIgnoreCantLimit;
+    private bool  _prevInvertCant, _prevIgnoreCantLimit, _prevInvertNormals;
 
     private Transform   _prevInterpStart, _prevInterpEnd;
     private Vector3     _prevInterpStartPos, _prevInterpEndPos;
@@ -178,6 +178,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
         if (ComputePlacementRulesHash() != _prevPlacementRulesHash) return true;
         if (_target.invertCant           != _prevInvertCant)       return true;
+        if (_target.invertNormals        != _prevInvertNormals)    return true;
         if (_target.paramIgnoreCantLimit != _prevIgnoreCantLimit)  return true;
 
         switch (_target.curveMode)
@@ -234,6 +235,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         if (_target == null) return;
         _prevCurveMode       = _target.curveMode;
         _prevDeformMode      = _target.deformMode;
+        _prevInvertNormals   = _target.invertNormals;
         _prevTileAxisPadding = _target.tileAxisPadding;
         _prevParamR           = _target.paramR;
         _prevParamAngle       = _target.paramAngle;
@@ -838,11 +840,13 @@ public class BezierRoadDeformerWindow : EditorWindow
         EditorGUI.indentLevel++;
 
         EditorGUI.BeginChangeCheck();
-        var newDeform = (DeformMode)EditorGUILayout.EnumPopup("端部処理", _target.deformMode);
+        var newDeform      = (DeformMode)EditorGUILayout.EnumPopup("端部処理",    _target.deformMode);
+        bool newInvertNorm = EditorGUILayout.Toggle("法線を反転",                  _target.invertNormals);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Deform Mode");
-            _target.deformMode = newDeform;
+            _target.deformMode     = newDeform;
+            _target.invertNormals  = newInvertNorm;
             EditorUtility.SetDirty(_target);
         }
 
@@ -892,4 +896,115 @@ public class BezierRoadDeformerWindow : EditorWindow
                 _target.placementRules.RemoveAt(i);
                 EditorUtility.SetDirty(_target);
                 EditorGUILayout.EndVertical();
-                ret
+                return;
+            }
+            EditorGUILayout.EndVertical();
+            EditorGUILayout.Space(2);
+        }
+
+        if (GUILayout.Button("+ ルール追加"))
+        {
+            Undo.RecordObject(_target, "Add Placement Rule");
+            _target.placementRules.Add(new PrefabPlacementRule());
+            EditorUtility.SetDirty(_target);
+        }
+
+        EditorGUI.indentLevel--;
+    }
+
+    // ---- Bake -----------------------------------------------
+
+    private void DrawBakeButton()
+    {
+        if (GUILayout.Button("Bake", GUILayout.Height(28)))
+            DoBake();
+    }
+
+    private void DoBake()
+    {
+        if (_target == null) return;
+
+        if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0)
+        {
+            if (_target.sourceParentObject != null)
+            {
+                _target.Initialize();
+                CacheAll();
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("Bake Error", "ソース親オブジェクトが設定されていません。", "OK");
+                return;
+            }
+        }
+
+        if (!ConfirmIfExcessiveTiles()) return;
+
+        Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake");
+
+        var meshes = _target.DeformAllMeshes();
+
+        // メッシュを保存するフォルダを準備
+        const string meshFolder = "Assets/BakedMeshes";
+        if (!AssetDatabase.IsValidFolder(meshFolder))
+            AssetDatabase.CreateFolder("Assets", "BakedMeshes");
+
+        for (int i = 0; i < _target.sourceMeshEntries.Count; i++)
+        {
+            var entry = _target.sourceMeshEntries[i];
+            var mesh  = i < meshes.Count ? meshes[i] : null;
+            if (mesh == null) continue;
+
+            string meshName = string.IsNullOrEmpty(entry.meshName) ? $"Mesh_{i}" : entry.meshName;
+
+            GameObject go;
+            if (entry.outputObject != null)
+            {
+                go           = entry.outputObject;
+                go.hideFlags = HideFlags.None;
+            }
+            else
+            {
+                go = new GameObject(meshName);
+                go.transform.SetParent(_target.transform, false);
+            }
+
+            var mf = go.GetComponent<MeshFilter>() ?? go.AddComponent<MeshFilter>();
+            mf.sharedMesh = mesh;
+            var mr = go.GetComponent<MeshRenderer>() ?? go.AddComponent<MeshRenderer>();
+            if (entry.materials != null) mr.sharedMaterials = entry.materials;
+
+#if MESH_DEFORMER_FBX_EXPORTER
+            // FBX Exporter が入っていれば FBX として保存し、読み込んだメッシュを差し替える
+            string fbxPath = $"{meshFolder}/{meshName}.fbx";
+            UnityEditor.Formats.Fbx.Exporter.ModelExporter.ExportObject(fbxPath, go);
+            AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceUpdate);
+            foreach (var a in AssetDatabase.LoadAllAssetsAtPath(fbxPath))
+            {
+                if (a is Mesh importedMesh) { mf.sharedMesh = importedMesh; break; }
+            }
+#else
+            // FBX Exporter がない場合は .asset として保存
+            string assetPath = $"{meshFolder}/{meshName}.asset";
+            var existing = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
+            if (existing != null) { EditorUtility.CopySerialized(mesh, existing); mf.sharedMesh = existing; }
+            else                  { AssetDatabase.CreateAsset(mesh, assetPath); }
+#endif
+
+            go.hideFlags       = HideFlags.None;
+            entry.outputObject = null;
+            Undo.RegisterCreatedObjectUndo(go, "Bake");
+        }
+
+        AssetDatabase.SaveAssets();
+
+        _target.UpdatePrefabPlacements();
+        foreach (var go in _target.spawnedPrefabs)
+            if (go != null) go.hideFlags = HideFlags.None;
+        _target.spawnedPrefabs.Clear();
+
+        DestroyImmediate(_target);
+        _target = null;
+        Repaint();
+    }
+}

@@ -9,6 +9,12 @@
   "precompiledReferences": [],
   "autoReferenced": true,
   "defineConstraints": [],
-  "versionDefines": [],
+  "versionDefines": [
+    {
+      "name": "com.unity.formats.fbx",
+      "expression": "",
+      "define": "MESH_DEFORMER_FBX_EXPORTER"
+    }
+  ],
   "noEngineReferences": false
 }

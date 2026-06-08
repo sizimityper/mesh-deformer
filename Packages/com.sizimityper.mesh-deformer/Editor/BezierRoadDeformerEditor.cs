@@ -24,7 +24,7 @@ public class BezierRoadDeformerEditor : Editor
     // 規制速度表示ラベル
     private static readonly string[] REGULATED_SPEED_LABELS =
         { "20", "30", "40", "50", "60", "80", "100", "120" };
-    private bool  _prevInvertCant, _prevIgnoreCantLimit;
+    private bool  _prevInvertCant, _prevIgnoreCantLimit, _prevInvertNormals;
 
     // Interpolation mode
     private Transform   _prevInterpStart, _prevInterpEnd;
@@ -149,6 +149,7 @@ public class BezierRoadDeformerEditor : Editor
     {
         if (_target.curveMode     != _prevCurveMode)     return true;
         if (_target.deformMode    != _prevDeformMode)    return true;
+        if (_target.invertNormals != _prevInvertNormals) return true;
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
         if (ComputePlacementRulesHash() != _prevPlacementRulesHash) return true;
         if (_target.invertCant           != _prevInvertCant)       return true;
@@ -207,7 +208,8 @@ public class BezierRoadDeformerEditor : Editor
     {
         if (_target == null) return;
         _prevCurveMode    = _target.curveMode;
-        _prevDeformMode   = _target.deformMode;
+        _prevDeformMode      = _target.deformMode;
+        _prevInvertNormals   = _target.invertNormals;
         _prevTileAxisPadding  = _target.tileAxisPadding;
 
         _prevParamR           = _target.paramR;
@@ -692,11 +694,13 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUI.indentLevel++;
 
         EditorGUI.BeginChangeCheck();
-        var newDeform = (DeformMode)EditorGUILayout.EnumPopup("端部処理", _target.deformMode);
+        var newDeform      = (DeformMode)EditorGUILayout.EnumPopup("端部処理",    _target.deformMode);
+        bool newInvertNorm = EditorGUILayout.Toggle("法線を反転",                  _target.invertNormals);
         if (EditorGUI.EndChangeCheck())
         {
             Undo.RecordObject(_target, "Change Deform Mode");
-            _target.deformMode = newDeform;
+            _target.deformMode     = newDeform;
+            _target.invertNormals  = newInvertNorm;
             EditorUtility.SetDirty(_target);
         }
 
@@ -884,11 +888,19 @@ public class BezierRoadDeformerEditor : Editor
         Undo.RegisterFullObjectHierarchyUndo(_target.gameObject, "Bake");
 
         var meshes = _target.DeformAllMeshes();
+
+        // メッシュを保存するフォルダを準備
+        const string meshFolder = "Assets/BakedMeshes";
+        if (!AssetDatabase.IsValidFolder(meshFolder))
+            AssetDatabase.CreateFolder("Assets", "BakedMeshes");
+
         for (int i = 0; i < _target.sourceMeshEntries.Count; i++)
         {
             var entry = _target.sourceMeshEntries[i];
             var mesh  = i < meshes.Count ? meshes[i] : null;
             if (mesh == null) continue;
+
+            string meshName = string.IsNullOrEmpty(entry.meshName) ? $"Mesh_{i}" : entry.meshName;
 
             GameObject go;
             if (entry.outputObject != null)
@@ -898,7 +910,7 @@ public class BezierRoadDeformerEditor : Editor
             }
             else
             {
-                go = new GameObject(entry.meshName ?? $"Mesh_{i}");
+                go = new GameObject(meshName);
                 go.transform.SetParent(_target.transform, false);
             }
 
@@ -907,10 +919,29 @@ public class BezierRoadDeformerEditor : Editor
             var mr = go.GetComponent<MeshRenderer>() ?? go.AddComponent<MeshRenderer>();
             if (entry.materials != null) mr.sharedMaterials = entry.materials;
 
+#if MESH_DEFORMER_FBX_EXPORTER
+            // FBX Exporter が入っていれば FBX として保存し、読み込んだメッシュを差し替える
+            string fbxPath = $"{meshFolder}/{meshName}.fbx";
+            UnityEditor.Formats.Fbx.Exporter.ModelExporter.ExportObject(fbxPath, go);
+            AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceUpdate);
+            foreach (var a in AssetDatabase.LoadAllAssetsAtPath(fbxPath))
+            {
+                if (a is Mesh importedMesh) { mf.sharedMesh = importedMesh; break; }
+            }
+#else
+            // FBX Exporter がない場合は .asset として保存
+            string assetPath = $"{meshFolder}/{meshName}.asset";
+            var existing = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
+            if (existing != null) { EditorUtility.CopySerialized(mesh, existing); mf.sharedMesh = existing; }
+            else                  { AssetDatabase.CreateAsset(mesh, assetPath); }
+#endif
+
             go.hideFlags = HideFlags.None;
             entry.outputObject = null;
             Undo.RegisterCreatedObjectUndo(go, "Bake");
         }
+
+        AssetDatabase.SaveAssets();
 
         _target.UpdatePrefabPlacements();
         foreach (var go in _target.spawnedPrefabs)
@@ -1056,4 +1087,64 @@ public class BezierRoadDeformerEditor : Editor
                      && target.paramUseEasement
                      && target.paramEasementLength > 0f;
         float easeLen = hasEase ? target.paramEasementLength : 0f;
-        float arcEnd  = total - ea
+        float arcEnd  = total - easeLen;
+
+        // ---- 1. カーブライン（緩和曲線は黄、円弧はオレンジ）----
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            float s = lut != null && lut.Length > i ? lut[i] : 0f;
+            bool  isEase = hasEase && (s < easeLen || s > arcEnd);
+            Gizmos.color = isEase ? new Color(1f, 0.9f, 0f) : new Color(1f, 0.5f, 0.1f);
+            Gizmos.DrawLine(target.transform.TransformPoint(pts[i]),
+                            target.transform.TransformPoint(pts[i + 1]));
+        }
+
+        if (total <= 0f) return;
+
+        // ---- 2. 断面（幅・高さ・カント）を等間隔で描画 ----
+        float minR = -0.5f, maxR = 0.5f, minU = 0f, maxU = 1f;
+        if (target.sourceMeshEntries != null && target.sourceMeshEntries.Count > 0)
+        {
+            float tMinR = float.MaxValue, tMaxR = float.MinValue;
+            float tMinU = float.MaxValue, tMaxU = float.MinValue;
+            foreach (var entry in target.sourceMeshEntries)
+            {
+                if (entry.mesh == null) continue;
+                foreach (var v in entry.mesh.vertices)
+                {
+                    float r, u;
+                    switch (target.axisDirection)
+                    {
+                        case AxisDirection.X: r = v.z; u = v.y; break;
+                        case AxisDirection.Y: r = v.x; u = v.z; break;
+                        default:             r = v.x; u = v.y; break;
+                    }
+                    if (r < tMinR) tMinR = r;
+                    if (r > tMaxR) tMaxR = r;
+                    if (u < tMinU) tMinU = u;
+                    if (u > tMaxU) tMaxU = u;
+                }
+            }
+            if (tMinR < tMaxR) { minR = tMinR; maxR = tMaxR; }
+            if (tMinU < tMaxU) { minU = tMinU; maxU = tMaxU; }
+        }
+
+        Gizmos.color = new Color(1f, 0.8f, 0.2f, 0.9f);
+        for (int j = 0; j <= 10; j++)
+        {
+            float s    = (float)j / 10f * total;
+            float cant = target.GetCantAtS(s);
+            var   sp   = target.EvaluateAtArcLength(s, cant);
+
+            Vector3 p0 = sp.position + sp.binormal * minR + sp.normal * minU; // 底・左
+            Vector3 p1 = sp.position + sp.binormal * maxR + sp.normal * minU; // 底・右
+            Vector3 p2 = sp.position + sp.binormal * maxR + sp.normal * maxU; // 上・右
+            Vector3 p3 = sp.position + sp.binormal * minR + sp.normal * maxU; // 上・左
+
+            Gizmos.DrawLine(p0, p1);
+            Gizmos.DrawLine(p1, p2);
+            Gizmos.DrawLine(p2, p3);
+            Gizmos.DrawLine(p3, p0);
+        }
+    }
+}
