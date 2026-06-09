@@ -900,7 +900,9 @@ public class BezierRoadDeformerEditor : Editor
             var mesh  = i < meshes.Count ? meshes[i] : null;
             if (mesh == null) continue;
 
-            string meshName = string.IsNullOrEmpty(entry.meshName) ? $"Mesh_{i}" : entry.meshName;
+            // 同名エントリが複数ある場合のアセットパス衝突を防ぐため、常にインデックスを付与する
+            string baseName = string.IsNullOrEmpty(entry.meshName) ? "Mesh" : entry.meshName;
+            string meshName = $"{baseName}_{i}";
 
             GameObject go;
             if (entry.outputObject != null)
@@ -922,8 +924,20 @@ public class BezierRoadDeformerEditor : Editor
 #if MESH_DEFORMER_FBX_EXPORTER
             // FBX Exporter が入っていれば FBX として保存し、読み込んだメッシュを差し替える
             string fbxPath = $"{meshFolder}/{meshName}.fbx";
+            // FBX Exporter の "Include" 設定が "Model + Anim" の場合ハングするため、
+            // Unity Editor の FBX Exporter 設定で "Include" を "Model" に変更しておくこと
+            // （ExportSettings は internal クラスのためコードから変更不可。設定はプロジェクトに永続保存される）
             UnityEditor.Formats.Fbx.Exporter.ModelExporter.ExportObject(fbxPath, go);
             AssetDatabase.ImportAsset(fbxPath, ImportAssetOptions.ForceUpdate);
+            // UV2生成 + 法線をジオメトリから再計算（FBX座標変換で法線が反転するのを防ぐ）
+            var importer = AssetImporter.GetAtPath(fbxPath) as ModelImporter;
+            if (importer != null)
+            {
+                bool needsReimport = false;
+                if (!importer.generateSecondaryUV)                                      { importer.generateSecondaryUV = true;                          needsReimport = true; }
+                if (importer.importNormals != ModelImporterNormals.Calculate)           { importer.importNormals = ModelImporterNormals.Calculate;       needsReimport = true; }
+                if (needsReimport) importer.SaveAndReimport();
+            }
             foreach (var a in AssetDatabase.LoadAllAssetsAtPath(fbxPath))
             {
                 if (a is Mesh importedMesh) { mf.sharedMesh = importedMesh; break; }
@@ -935,6 +949,7 @@ public class BezierRoadDeformerEditor : Editor
             if (existing != null) { EditorUtility.CopySerialized(mesh, existing); mf.sharedMesh = existing; }
             else                  { AssetDatabase.CreateAsset(mesh, assetPath); }
 #endif
+
 
             go.hideFlags = HideFlags.None;
             entry.outputObject = null;

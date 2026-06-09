@@ -1,7 +1,7 @@
 {
   "name": "MeshDeformer.Editor",
   "rootNamespace": "",
-  "references": ["MeshDeformer.Runtime"],
+  "references": ["MeshDeformer.Runtime", "Unity.Formats.Fbx.Editor"],
   "includePlatforms": ["Editor"],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
@@ -16,5 +16,4 @@
       "define": "MESH_DEFORMER_FBX_EXPORTER"
     }
   ],
-  "noEngineReferences": false
-}
+  "n
