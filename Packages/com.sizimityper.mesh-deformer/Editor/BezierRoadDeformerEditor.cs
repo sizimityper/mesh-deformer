@@ -280,7 +280,7 @@ public class BezierRoadDeformerEditor : Editor
         foreach (var e in _target.sourceMeshEntries)
         {
             if (e == null) continue;
-            h = h * 31 + e.followCant.GetHashCode();
+            h = h * 31 + (int)e.EffectiveCantMode;
         }
         return h;
     }
@@ -359,14 +359,22 @@ public class BezierRoadDeformerEditor : Editor
         else
         {
             EditorGUILayout.HelpBox(
-                "「カント追従」をOFFにすると、そのメッシュは横方向のみカーブ位置に追従し、上方向は鉛直（水平）を保ちます。\n" +
-                "防音壁・ガードレール・橋桁など、路面と違って鉛直に立つ構造物に使用してください。", MessageType.None);
+                "カント追従の方式をメッシュごとに選べます。\n" +
+                "追従: 路面と一体で傾く（路面・区画線など）\n" +
+                "鉛直（接地）: 鉛直を保ち、底面をカント路面に接地（防音壁・高欄・ガードレールなど）\n" +
+                "上面のみ追従: 上面だけカント路面に沿い、下面は水平（橋桁など全幅の構造）", MessageType.None);
             EditorGUI.BeginChangeCheck();
             foreach (var entry in _target.sourceMeshEntries)
             {
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.LabelField(string.IsNullOrEmpty(entry.meshName) ? "(no name)" : entry.meshName);
-                entry.followCant = EditorGUILayout.ToggleLeft("カント追従", entry.followCant, GUILayout.Width(90));
+                var curMode = entry.EffectiveCantMode;
+                var selMode = (CantFollowMode)EditorGUILayout.Popup((int)curMode, CANT_MODE_LABELS, GUILayout.Width(130));
+                if (selMode != curMode)
+                {
+                    entry.cantFollowMode = selMode;
+                    entry.followCant     = true; // 旧フィールドを無効化（enum側を正とする）
+                }
                 EditorGUILayout.EndHorizontal();
             }
             if (EditorGUI.EndChangeCheck())
@@ -375,6 +383,9 @@ public class BezierRoadDeformerEditor : Editor
 
         EditorGUI.indentLevel--;
     }
+
+    // カント追従方式ラベル（Popupは "/" をサブメニュー区切りと解釈するため使用しない）
+    private static readonly string[] CANT_MODE_LABELS = { "追従", "鉛直（接地）", "上面のみ追従" };
 
     // ---- Curve Mode -----------------------------------------
 

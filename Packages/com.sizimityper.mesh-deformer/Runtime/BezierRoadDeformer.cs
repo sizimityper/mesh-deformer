@@ -42,14 +42,29 @@ namespace SizimityperMeshDeformer
         }
     }
 
+    /// <summary>メッシュごとのカント追従方式</summary>
+    public enum CantFollowMode
+    {
+        /// <summary>路面と一体でカントに追従して傾く（路面・床版など）</summary>
+        Full,
+        /// <summary>鉛直を保ち、接地補正でカント路面に接地させる（防音壁・高欄・ガードレールなど）</summary>
+        Vertical,
+        /// <summary>上面のみカント路面に追従し、下面は水平を保つ（橋桁など全幅の構造。実物の変断面・支承高変化に相当）</summary>
+        TopOnly,
+    }
+
     [Serializable]
     public class SourceMeshEntry
     {
         public Mesh       mesh;
         public Material[] materials;
         public string     meshName;
-        /// <summary>true: 路面などカーブのカント角に追従して傾く。false: 防音壁・ガードレール・橋桁など、横位置はカーブに追従しつつ上方向は鉛直を保つ。</summary>
-        public bool       followCant = true;
+        /// <summary>カント追従方式。Full=路面と一体で傾く / Vertical=鉛直を保ち接地 / TopOnly=上面のみ追従（橋桁向け）</summary>
+        public CantFollowMode cantFollowMode = CantFollowMode.Full;
+        [HideInInspector] public bool followCant = true; // 旧フィールド（後方互換・非表示）
+        /// <summary>旧データ（followCant=false）を Vertical として扱う実効モード</summary>
+        public CantFollowMode EffectiveCantMode
+            => (!followCant && cantFollowMode == CantFollowMode.Full) ? CantFollowMode.Vertical : cantFollowMode;
         [HideInInspector] public GameObject outputObject;
     }
 
@@ -166,14 +181,14 @@ namespace SizimityperMeshDeformer
 
         public void CollectSourceMeshes()
         {
-            // 再収集前に、同名エントリの followCant 設定を退避しておく（ユーザーが設定した値を保持するため）
-            var prevFollowCant = new Dictionary<string, bool>();
+            // 再収集前に、同名エントリのカント追従設定を退避しておく（ユーザーが設定した値を保持するため）
+            var prevModes = new Dictionary<string, CantFollowMode>();
             if (sourceMeshEntries != null)
                 foreach (var e in sourceMeshEntries)
                 {
                     if (e.outputObject != null) DestroyImmediate(e.outputObject);
-                    if (!string.IsNullOrEmpty(e.meshName) && !prevFollowCant.ContainsKey(e.meshName))
-                        prevFollowCant[e.meshName] = e.followCant;
+                    if (!string.IsNullOrEmpty(e.meshName) && !prevModes.ContainsKey(e.meshName))
+                        prevModes[e.meshName] = e.EffectiveCantMode;
                 }
 
             sourceMeshEntries = new List<SourceMeshEntry>();
@@ -221,13 +236,13 @@ namespace SizimityperMeshDeformer
                 var mr = mf.GetComponent<MeshRenderer>();
                 if (mr != null) mats = mr.sharedMaterials;
 
-                bool keepFollowCant = !prevFollowCant.TryGetValue(mf.sharedMesh.name, out bool fc) || fc;
+                CantFollowMode keepMode = prevModes.TryGetValue(mf.sharedMesh.name, out var m) ? m : CantFollowMode.Full;
                 sourceMeshEntries.Add(new SourceMeshEntry
                 {
-                    mesh       = newMesh,
-                    materials  = mats,
-                    meshName   = mf.sharedMesh.name,
-                    followCant = keepFollowCant
+                    mesh           = newMesh,
+                    materials      = mats,
+                    meshName       = mf.sharedMesh.name,
+                    cantFollowMode = keepMode
                 });
             }
         }
@@ -743,23 +758,122 @@ namespace SizimityperMeshDeformer
             // Pre-pass: shared axis bounds across ALL meshes so every mesh uses identical tile length
             if (!GetSourceMeshAxisBounds(out float sharedMin, out float sharedMax)) return result;
 
-            foreach (var entry in sourceMeshEntries)
+            // Vertical モードのメッシュ用の共有接地アンカー（左右サイドごと）を計算
+            float[] groundAnchors = ComputeGroundAnchors();
+
+            // TopOnly モードの高さ正規化基準は全 TopOnly メッシュ共有のバウンズを使う。
+            // メッシュごとに正規化すると、桁に付随する小部品（フック等）が自分の小さな高さ範囲で
+            // w=0〜1 を振られてしまい、桁本体と補正量が食い違って浮く（2026-07-20確認）。
+            float topMinU = 0f, topRange = 0f;
             {
+                float mn = float.MaxValue, mx = float.MinValue;
+                foreach (var e in sourceMeshEntries)
+                {
+                    if (e.mesh == null || e.EffectiveCantMode != CantFollowMode.TopOnly) continue;
+                    GetHeightBounds(e.mesh.vertices, out float a, out float b);
+                    if (a < mn) mn = a;
+                    if (b > mx) mx = b;
+                }
+                if (mx > mn) { topMinU = mn; topRange = Mathf.Max(mx - mn, 1e-6f); }
+            }
+
+            for (int i = 0; i < sourceMeshEntries.Count; i++)
+            {
+                var entry = sourceMeshEntries[i];
                 if (entry.mesh == null) { result.Add(null); continue; }
+                CantFollowMode mode = entry.EffectiveCantMode;
+                float anchorOff = mode == CantFollowMode.Vertical ? groundAnchors[i] : 0f;
                 result.Add(deformMode == DeformMode.Stretch
-                    ? DeformStretch(entry.mesh, sharedMin, sharedMax, entry.followCant)
-                    : DeformCut(entry.mesh, sharedMin, sharedMax, entry.followCant));
+                    ? DeformStretch(entry.mesh, sharedMin, sharedMax, mode, anchorOff, topMinU, topRange)
+                    : DeformCut(entry.mesh, sharedMin, sharedMax, mode, anchorOff, topMinU, topRange));
             }
             return result;
         }
 
-        private Mesh DeformStretch(Mesh srcMesh, float meshMinA, float meshMaxA, bool followCant)
+        /// <summary>メッシュの横方向バウンズを返す</summary>
+        private bool GetLateralBounds(Mesh srcMesh, out float min, out float max)
+        {
+            min = float.MaxValue; max = float.MinValue;
+            foreach (var v in srcMesh.vertices)
+            {
+                var (r, _) = GetLateralOffsets(v);
+                if (r < min) min = r;
+                if (r > max) max = r;
+            }
+            return max > min;
+        }
+
+        /// <summary>
+        /// Vertical モードのメッシュ全体で共有する左右サイドごとの接地基準線を計算し、
+        /// 各エントリに適用すべきアンカー横オフセットを返す。
+        /// - 片側に収まるメッシュ（壁・パネル・高欄など）: 同じ側の全メッシュの横中心の平均を共通基準にする
+        ///   → 積層された別メッシュ同士が同一の補正量で動き、ツライチのまま接地する
+        /// - 道路全幅にまたがるメッシュ: 剛体のまま左右同時に接地できないため補正なし（0）。
+        ///   橋桁など全幅の構造には TopOnly モードを使うこと。
+        /// </summary>
+        private float[] ComputeGroundAnchors()
+        {
+            int n = sourceMeshEntries.Count;
+            var anchors = new float[n];          // エントリごとの適用アンカー（Vertical 以外や全幅メッシュは 0）
+            var centers = new float[n];          // 各メッシュの横中心
+            var side    = new int[n];            // -1=左, +1=右, 0=対象外（全幅 or Vertical以外）
+            const float SPAN_EPS = 0.1f;         // 中心をまたぐ判定の許容量 [m]
+
+            float sumL = 0f, sumR = 0f;
+            int   cntL = 0,  cntR = 0;
+            for (int i = 0; i < n; i++)
+            {
+                var entry = sourceMeshEntries[i];
+                if (entry.mesh == null || entry.EffectiveCantMode != CantFollowMode.Vertical) continue;
+                if (!GetLateralBounds(entry.mesh, out float bMin, out float bMax)) continue;
+
+                if (bMin < -SPAN_EPS && bMax > SPAN_EPS) continue; // 全幅メッシュ → 補正なし
+
+                centers[i] = (bMin + bMax) * 0.5f;
+                side[i]    = centers[i] >= 0f ? 1 : -1;
+                if (side[i] > 0) { sumR += centers[i]; cntR++; }
+                else             { sumL += centers[i]; cntL++; }
+            }
+
+            float anchorL = cntL > 0 ? sumL / cntL : 0f;
+            float anchorR = cntR > 0 ? sumR / cntR : 0f;
+            for (int i = 0; i < n; i++)
+                anchors[i] = side[i] > 0 ? anchorR : side[i] < 0 ? anchorL : 0f;
+            return anchors;
+        }
+
+        /// <summary>followCant=false 用の接地補正ベクトルを返す。
+        /// 接地基準線（anchorOff）における「カント込み路面上の位置」と「鉛直基準面上の位置」の差。
+        /// 断面全体をこのベクトルで平行移動することで、鉛直を保ったまま壁底面をカント路面に接地させる。</summary>
+        private Vector3 GetGroundShift(float s, SplinePoint spVertical, float anchorOff)
+        {
+            if (Mathf.Abs(anchorOff) < 1e-6f) return Vector3.zero;
+            float cant = GetCantAtS(s);
+            if (Mathf.Abs(cant) < 1e-6f) return Vector3.zero;
+            SplinePoint spCant = EvaluateAtArcLength(s, cant);
+            return (spCant.binormal - spVertical.binormal) * anchorOff;
+        }
+
+        /// <summary>TopOnly モード用: メッシュの上下バウンズを計算して高さ割合の基準にする</summary>
+        private void GetHeightBounds(Vector3[] srcVerts, out float minU, out float maxU)
+        {
+            minU = float.MaxValue; maxU = float.MinValue;
+            foreach (var v in srcVerts)
+            {
+                var (_, u) = GetLateralOffsets(v);
+                if (u < minU) minU = u;
+                if (u > maxU) maxU = u;
+            }
+        }
+
+        private Mesh DeformStretch(Mesh srcMesh, float meshMinA, float meshMaxA, CantFollowMode mode, float anchorOff, float topMinU, float topRange)
         {
             var srcVerts = srcMesh.vertices;
             var srcNorms = srcMesh.normals;
             bool hasNormals = srcNorms != null && srcNorms.Length == srcVerts.Length;
             var  srcUVs     = srcMesh.uv;
             int  subCount   = srcMesh.subMeshCount;
+            if (topRange <= 0f) topRange = 1e-6f;
 
             float meshLen   = Mathf.Max(meshMaxA - meshMinA, 1e-6f);
             int   tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / meshLen));
@@ -796,13 +910,20 @@ namespace SizimityperMeshDeformer
                                   : localT >= 1f ? tileEndS
                                   : tileStartS + localT * tileLen;
 
-                    // followCant=false のメッシュはカントなし（cant=0）で評価した鉛直フレームを使う。
+                    // Full 以外のメッシュはカントなし（cant=0）で評価した鉛直フレームを使う。
                     // EvaluateAtArcLength の position はカント角に依存しないため、設置位置はカーブに正しく追従する。
-                    float cant = followCant ? GetCantAtS(s) : 0f;
+                    // Vertical: 接地補正（groundShift）で断面全体を平行移動し、壁底面をカント込み路面に接地させる。
+                    // TopOnly:  高さ割合 w に応じた補正で上面のみカント路面に追従させ、下面は水平を保つ。
+                    float cant = mode == CantFollowMode.Full ? GetCantAtS(s) : 0f;
                     SplinePoint sp = EvaluateAtArcLength(s, cant);
                     var (rightOff, upOff) = GetLateralOffsets(srcVerts[i]);
+                    Vector3 groundShift = Vector3.zero;
+                    if (mode == CantFollowMode.Vertical)
+                        groundShift = GetGroundShift(s, sp, anchorOff);
+                    else if (mode == CantFollowMode.TopOnly)
+                        groundShift = GetGroundShift(s, sp, rightOff * Mathf.Clamp01((upOff - topMinU) / topRange));
 
-                    combinedVerts.Add(transform.InverseTransformPoint(sp.position + sp.binormal * rightOff + sp.normal * upOff));
+                    combinedVerts.Add(transform.InverseTransformPoint(sp.position + groundShift + sp.binormal * rightOff + sp.normal * upOff));
                     combinedNorms.Add(hasNormals ? TransformNormal(srcNorms[i], sp) : Vector3.up);
                     combinedUVs.Add(srcUVs != null && i < srcUVs.Length ? srcUVs[i] : Vector2.zero);
 
@@ -870,13 +991,14 @@ namespace SizimityperMeshDeformer
             return mesh;
         }
 
-        private Mesh DeformCut(Mesh srcMesh, float meshMinA, float meshMaxA, bool followCant)
+        private Mesh DeformCut(Mesh srcMesh, float meshMinA, float meshMaxA, CantFollowMode mode, float anchorOff, float topMinU, float topRange)
         {
             var srcVerts = srcMesh.vertices;
             var srcNorms = srcMesh.normals;
             bool hasNormals = srcNorms != null && srcNorms.Length == srcVerts.Length;
             var  srcUVs     = srcMesh.uv;
             int  subCount   = srcMesh.subMeshCount;
+            if (topRange <= 0f) topRange = 1e-6f;
 
             float meshLen = Mathf.Max(meshMaxA - meshMinA, 1e-6f);
             int   tileCount = Mathf.Max(1, Mathf.CeilToInt(totalArcLength / meshLen));
@@ -918,13 +1040,18 @@ namespace SizimityperMeshDeformer
                     bool  trimmed = sRaw > totalArcLength;
                     float s       = Mathf.Clamp(sRaw, 0f, totalArcLength);
 
-                    // followCant=false のメッシュはカントなし（cant=0）で評価した鉛直フレームを使う。
-                    // EvaluateAtArcLength の position はカント角に依存しないため、設置位置はカーブに正しく追従する。
-                    float cant = followCant ? GetCantAtS(s) : 0f;
+                    // Full 以外のメッシュはカントなし（cant=0）で評価した鉛直フレームを使う。
+                    // Vertical: 接地補正で断面全体を平行移動。TopOnly: 高さ割合 w に応じて上面のみカント追従。
+                    float cant = mode == CantFollowMode.Full ? GetCantAtS(s) : 0f;
                     SplinePoint sp = EvaluateAtArcLength(s, cant);
                     var (rightOff, upOff) = GetLateralOffsets(srcVerts[i]);
+                    Vector3 groundShift = Vector3.zero;
+                    if (mode == CantFollowMode.Vertical)
+                        groundShift = GetGroundShift(s, sp, anchorOff);
+                    else if (mode == CantFollowMode.TopOnly)
+                        groundShift = GetGroundShift(s, sp, rightOff * Mathf.Clamp01((upOff - topMinU) / topRange));
 
-                    combinedVerts.Add(transform.InverseTransformPoint(sp.position + sp.binormal * rightOff + sp.normal * upOff));
+                    combinedVerts.Add(transform.InverseTransformPoint(sp.position + groundShift + sp.binormal * rightOff + sp.normal * upOff));
                     combinedNorms.Add(hasNormals ? TransformNormal(srcNorms[i], sp) : Vector3.up);
                     combinedUVs.Add(srcUVs != null && i < srcUVs.Length ? srcUVs[i] : Vector2.zero);
                     combinedTrimmed.Add(trimmed);
@@ -939,9 +1066,12 @@ namespace SizimityperMeshDeformer
                 tileStartVerts.Add(thisStarts);
                 tileEndVerts.Add(thisEnds);
 
-                // Precompute boundary SplinePoint once per tile（followCant=false は鉛直フレーム）
-                float       boundaryCant = followCant ? GetCantAtS(totalArcLength) : 0f;
-                SplinePoint boundarySP   = EvaluateAtArcLength(totalArcLength, boundaryCant);
+                // Precompute boundary SplinePoint once per tile（Full 以外は鉛直フレーム＋接地補正）
+                float       boundaryCant  = mode == CantFollowMode.Full ? GetCantAtS(totalArcLength) : 0f;
+                SplinePoint boundarySP    = EvaluateAtArcLength(totalArcLength, boundaryCant);
+                Vector3     boundaryShift = mode == CantFollowMode.Vertical
+                    ? GetGroundShift(totalArcLength, boundarySP, anchorOff)
+                    : Vector3.zero; // TopOnly は頂点ごとの高さ割合が必要なためクリップ時に個別計算
 
                 for (int sub = 0; sub < subCount; sub++)
                 {
@@ -981,7 +1111,10 @@ namespace SizimityperMeshDeformer
                                 float tt   = (totalArcLength - sA) / (sB - sA);
                                 float rOff = Mathf.Lerp(combinedRightOff[curr], combinedRightOff[next], tt);
                                 float uOff = Mathf.Lerp(combinedUpOff[curr],    combinedUpOff[next],    tt);
-                                Vector3 bWorldPos = boundarySP.position + boundarySP.binormal * rOff + boundarySP.normal * uOff;
+                                Vector3 bShift = boundaryShift;
+                                if (mode == CantFollowMode.TopOnly)
+                                    bShift = GetGroundShift(totalArcLength, boundarySP, rOff * Mathf.Clamp01((uOff - topMinU) / topRange));
+                                Vector3 bWorldPos = boundarySP.position + bShift + boundarySP.binormal * rOff + boundarySP.normal * uOff;
                                 combinedVerts.Add(transform.InverseTransformPoint(bWorldPos));
                                 combinedNorms.Add(Vector3.Slerp(combinedNorms[curr], combinedNorms[next], tt).normalized);
                                 combinedUVs.Add(Vector2.Lerp(combinedUVs[curr], combinedUVs[next], tt));
