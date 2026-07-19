@@ -30,9 +30,3 @@ jobs:
         with:
           files: com.sizimityper.mesh-deformer-${{ steps.version.outputs.version }}.zip
 
-      - name: Trigger VPM listing update
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.VPM_LISTING_TOKEN }}
-          repository: sizimityper/vpm
-          event-type: update-listing
