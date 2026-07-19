@@ -47,6 +47,9 @@ public class BezierRoadDeformerWindow : EditorWindow
     // Prefab placement
     private int _prevPlacementRulesHash;
 
+    // Source mesh list
+    private int _prevSourceMeshEntriesHash;
+
     // ============================================================
 
     void OnEnable()
@@ -177,6 +180,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         if (_target.deformMode   != _prevDeformMode)   return true;
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
         if (ComputePlacementRulesHash() != _prevPlacementRulesHash) return true;
+        if (ComputeSourceMeshEntriesHash() != _prevSourceMeshEntriesHash) return true;
         if (_target.invertCant           != _prevInvertCant)       return true;
         if (_target.invertNormals        != _prevInvertNormals)    return true;
         if (_target.paramIgnoreCantLimit != _prevIgnoreCantLimit)  return true;
@@ -274,6 +278,7 @@ public class BezierRoadDeformerWindow : EditorWindow
         _prevStraightAutoGrade  = _target.paramStraightAutoGrade;
         _prevStraightHeight     = _target.paramStraightHeight;
         _prevPlacementRulesHash = ComputePlacementRulesHash();
+        _prevSourceMeshEntriesHash = ComputeSourceMeshEntriesHash();
     }
 
     private int ComputePlacementRulesHash()
@@ -287,6 +292,18 @@ public class BezierRoadDeformerWindow : EditorWindow
             h = h * 31 + r.positionOffset.GetHashCode();
             h = h * 31 + r.rotationOffset.GetHashCode();
             h = h * 31 + r.followCant.GetHashCode();
+        }
+        return h;
+    }
+
+    private int ComputeSourceMeshEntriesHash()
+    {
+        if (_target.sourceMeshEntries == null) return 0;
+        int h = _target.sourceMeshEntries.Count;
+        foreach (var e in _target.sourceMeshEntries)
+        {
+            if (e == null) continue;
+            h = h * 31 + (int)e.EffectiveCantMode;
         }
         return h;
     }
@@ -312,6 +329,8 @@ public class BezierRoadDeformerWindow : EditorWindow
 
         _scroll = EditorGUILayout.BeginScrollView(_scroll);
         DrawBaseObjectSection();
+        EditorGUILayout.Space(6);
+        DrawSourceMeshListSection();
         EditorGUILayout.Space(6);
         DrawCurveModeSection();
         EditorGUILayout.Space(6);
@@ -502,6 +521,48 @@ public class BezierRoadDeformerWindow : EditorWindow
 
         EditorGUI.indentLevel--;
     }
+
+    // ---- Source Mesh List -------------------------------------
+
+    private void DrawSourceMeshListSection()
+    {
+        EditorGUILayout.LabelField("■ ソースメッシュ一覧", EditorStyles.boldLabel);
+        EditorGUI.indentLevel++;
+
+        if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0)
+        {
+            EditorGUILayout.HelpBox("ソース親オブジェクトを設定すると、配下のメッシュが一覧表示されます。", MessageType.None);
+        }
+        else
+        {
+            EditorGUILayout.HelpBox(
+                "カント追従の方式をメッシュごとに選べます。\n" +
+                "追従: 路面と一体で傾く（路面・区画線など）\n" +
+                "鉛直（接地）: 鉛直を保ち、底面をカント路面に接地（防音壁・高欄・ガードレールなど）\n" +
+                "上面のみ追従: 上面だけカント路面に沿い、下面は水平（橋桁など全幅の構造）", MessageType.None);
+            EditorGUI.BeginChangeCheck();
+            foreach (var entry in _target.sourceMeshEntries)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(string.IsNullOrEmpty(entry.meshName) ? "(no name)" : entry.meshName);
+                var curMode = entry.EffectiveCantMode;
+                var selMode = (CantFollowMode)EditorGUILayout.Popup((int)curMode, CANT_MODE_LABELS, GUILayout.Width(130));
+                if (selMode != curMode)
+                {
+                    entry.cantFollowMode = selMode;
+                    entry.followCant     = true; // 旧フィールドを無効化（enum側を正とする）
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+            if (EditorGUI.EndChangeCheck())
+                EditorUtility.SetDirty(_target);
+        }
+
+        EditorGUI.indentLevel--;
+    }
+
+    // カント追従方式ラベル（Popupは "/" をサブメニュー区切りと解釈するため使用しない）
+    private static readonly string[] CANT_MODE_LABELS = { "追従", "鉛直（接地）", "上面のみ追従" };
 
     // ---- Curve Mode -----------------------------------------
 
