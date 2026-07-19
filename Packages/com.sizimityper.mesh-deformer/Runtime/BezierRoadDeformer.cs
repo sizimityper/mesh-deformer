@@ -48,6 +48,8 @@ namespace SizimityperMeshDeformer
         public Mesh       mesh;
         public Material[] materials;
         public string     meshName;
+        /// <summary>true: 路面などカーブのカント角に追従して傾く。false: 防音壁・ガードレール・橋桁など、横位置はカーブに追従しつつ上方向は鉛直を保つ。</summary>
+        public bool       followCant = true;
         [HideInInspector] public GameObject outputObject;
     }
 
@@ -164,9 +166,15 @@ namespace SizimityperMeshDeformer
 
         public void CollectSourceMeshes()
         {
+            // 再収集前に、同名エントリの followCant 設定を退避しておく（ユーザーが設定した値を保持するため）
+            var prevFollowCant = new Dictionary<string, bool>();
             if (sourceMeshEntries != null)
                 foreach (var e in sourceMeshEntries)
+                {
                     if (e.outputObject != null) DestroyImmediate(e.outputObject);
+                    if (!string.IsNullOrEmpty(e.meshName) && !prevFollowCant.ContainsKey(e.meshName))
+                        prevFollowCant[e.meshName] = e.followCant;
+                }
 
             sourceMeshEntries = new List<SourceMeshEntry>();
             if (sourceParentObject == null) return;
@@ -213,11 +221,13 @@ namespace SizimityperMeshDeformer
                 var mr = mf.GetComponent<MeshRenderer>();
                 if (mr != null) mats = mr.sharedMaterials;
 
+                bool keepFollowCant = !prevFollowCant.TryGetValue(mf.sharedMesh.name, out bool fc) || fc;
                 sourceMeshEntries.Add(new SourceMeshEntry
                 {
-                    mesh     = newMesh,
-                    materials = mats,
-                    meshName  = mf.sharedMesh.name
+                    mesh       = newMesh,
+                    materials  = mats,
+                    meshName   = mf.sharedMesh.name,
+                    followCant = keepFollowCant
                 });
             }
         }
@@ -737,13 +747,13 @@ namespace SizimityperMeshDeformer
             {
                 if (entry.mesh == null) { result.Add(null); continue; }
                 result.Add(deformMode == DeformMode.Stretch
-                    ? DeformStretch(entry.mesh, sharedMin, sharedMax)
-                    : DeformCut(entry.mesh, sharedMin, sharedMax));
+                    ? DeformStretch(entry.mesh, sharedMin, sharedMax, entry.followCant)
+                    : DeformCut(entry.mesh, sharedMin, sharedMax, entry.followCant));
             }
             return result;
         }
 
-        private Mesh DeformStretch(Mesh srcMesh, float meshMinA, float meshMaxA)
+        private Mesh DeformStretch(Mesh srcMesh, float meshMinA, float meshMaxA, bool followCant)
         {
             var srcVerts = srcMesh.vertices;
             var srcNorms = srcMesh.normals;
@@ -786,7 +796,9 @@ namespace SizimityperMeshDeformer
                                   : localT >= 1f ? tileEndS
                                   : tileStartS + localT * tileLen;
 
-                    float cant = GetCantAtS(s);
+                    // followCant=false のメッシュはカントなし（cant=0）で評価した鉛直フレームを使う。
+                    // EvaluateAtArcLength の position はカント角に依存しないため、設置位置はカーブに正しく追従する。
+                    float cant = followCant ? GetCantAtS(s) : 0f;
                     SplinePoint sp = EvaluateAtArcLength(s, cant);
                     var (rightOff, upOff) = GetLateralOffsets(srcVerts[i]);
 
@@ -858,7 +870,7 @@ namespace SizimityperMeshDeformer
             return mesh;
         }
 
-        private Mesh DeformCut(Mesh srcMesh, float meshMinA, float meshMaxA)
+        private Mesh DeformCut(Mesh srcMesh, float meshMinA, float meshMaxA, bool followCant)
         {
             var srcVerts = srcMesh.vertices;
             var srcNorms = srcMesh.normals;
@@ -906,7 +918,9 @@ namespace SizimityperMeshDeformer
                     bool  trimmed = sRaw > totalArcLength;
                     float s       = Mathf.Clamp(sRaw, 0f, totalArcLength);
 
-                    float cant = GetCantAtS(s);
+                    // followCant=false のメッシュはカントなし（cant=0）で評価した鉛直フレームを使う。
+                    // EvaluateAtArcLength の position はカント角に依存しないため、設置位置はカーブに正しく追従する。
+                    float cant = followCant ? GetCantAtS(s) : 0f;
                     SplinePoint sp = EvaluateAtArcLength(s, cant);
                     var (rightOff, upOff) = GetLateralOffsets(srcVerts[i]);
 
@@ -925,8 +939,8 @@ namespace SizimityperMeshDeformer
                 tileStartVerts.Add(thisStarts);
                 tileEndVerts.Add(thisEnds);
 
-                // Precompute boundary SplinePoint once per tile
-                float       boundaryCant = GetCantAtS(totalArcLength);
+                // Precompute boundary SplinePoint once per tile（followCant=false は鉛直フレーム）
+                float       boundaryCant = followCant ? GetCantAtS(totalArcLength) : 0f;
                 SplinePoint boundarySP   = EvaluateAtArcLength(totalArcLength, boundaryCant);
 
                 for (int sub = 0; sub < subCount; sub++)

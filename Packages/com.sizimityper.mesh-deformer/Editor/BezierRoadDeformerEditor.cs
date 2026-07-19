@@ -47,6 +47,9 @@ public class BezierRoadDeformerEditor : Editor
     // Prefab placement
     private int _prevPlacementRulesHash;
 
+    // Source mesh list
+    private int _prevSourceMeshEntriesHash;
+
     // ============================================================
 
     void OnEnable()
@@ -152,6 +155,7 @@ public class BezierRoadDeformerEditor : Editor
         if (_target.invertNormals != _prevInvertNormals) return true;
         if (_target.tileAxisPadding != _prevTileAxisPadding) return true;
         if (ComputePlacementRulesHash() != _prevPlacementRulesHash) return true;
+        if (ComputeSourceMeshEntriesHash() != _prevSourceMeshEntriesHash) return true;
         if (_target.invertCant           != _prevInvertCant)       return true;
         if (_target.paramIgnoreCantLimit != _prevIgnoreCantLimit)  return true;
 
@@ -251,6 +255,7 @@ public class BezierRoadDeformerEditor : Editor
         _prevStraightAutoGrade  = _target.paramStraightAutoGrade;
         _prevStraightHeight     = _target.paramStraightHeight;
         _prevPlacementRulesHash = ComputePlacementRulesHash();
+        _prevSourceMeshEntriesHash = ComputeSourceMeshEntriesHash();
     }
 
     private int ComputePlacementRulesHash()
@@ -268,6 +273,18 @@ public class BezierRoadDeformerEditor : Editor
         return h;
     }
 
+    private int ComputeSourceMeshEntriesHash()
+    {
+        if (_target.sourceMeshEntries == null) return 0;
+        int h = _target.sourceMeshEntries.Count;
+        foreach (var e in _target.sourceMeshEntries)
+        {
+            if (e == null) continue;
+            h = h * 31 + e.followCant.GetHashCode();
+        }
+        return h;
+    }
+
     // ============================================================
     // Inspector GUI
     // ============================================================
@@ -281,6 +298,8 @@ public class BezierRoadDeformerEditor : Editor
         EditorGUILayout.Space(4);
 
         DrawBaseObjectSection();
+        EditorGUILayout.Space(6);
+        DrawSourceMeshListSection();
         EditorGUILayout.Space(6);
         DrawCurveModeSection();
         EditorGUILayout.Space(6);
@@ -321,6 +340,37 @@ public class BezierRoadDeformerEditor : Editor
                 CacheAll();
             }
             EditorUtility.SetDirty(_target);
+        }
+
+        EditorGUI.indentLevel--;
+    }
+
+    // ---- Source Mesh List -------------------------------------
+
+    private void DrawSourceMeshListSection()
+    {
+        EditorGUILayout.LabelField("■ ソースメッシュ一覧", EditorStyles.boldLabel);
+        EditorGUI.indentLevel++;
+
+        if (_target.sourceMeshEntries == null || _target.sourceMeshEntries.Count == 0)
+        {
+            EditorGUILayout.HelpBox("ソース親オブジェクトを設定すると、配下のメッシュが一覧表示されます。", MessageType.None);
+        }
+        else
+        {
+            EditorGUILayout.HelpBox(
+                "「カント追従」をOFFにすると、そのメッシュは横方向のみカーブ位置に追従し、上方向は鉛直（水平）を保ちます。\n" +
+                "防音壁・ガードレール・橋桁など、路面と違って鉛直に立つ構造物に使用してください。", MessageType.None);
+            EditorGUI.BeginChangeCheck();
+            foreach (var entry in _target.sourceMeshEntries)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField(string.IsNullOrEmpty(entry.meshName) ? "(no name)" : entry.meshName);
+                entry.followCant = EditorGUILayout.ToggleLeft("カント追従", entry.followCant, GUILayout.Width(90));
+                EditorGUILayout.EndHorizontal();
+            }
+            if (EditorGUI.EndChangeCheck())
+                EditorUtility.SetDirty(_target);
         }
 
         EditorGUI.indentLevel--;
